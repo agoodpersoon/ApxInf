@@ -550,6 +550,9 @@ fn transpose_2d(tensor: &Tensor) -> Result<Tensor> {
             }
             Tensor::from_f8_e4m3(vec![cols, rows], &dst)
         }
+        DType::U8 | DType::I8 | DType::I32 | DType::I64 => Err(Error::Other(
+            "π0.5 linear weight transpose does not support integer carriers".into(),
+        )),
     }
 }
 
@@ -578,6 +581,9 @@ fn add_one(tensor: Tensor) -> Result<Tensor> {
         }
         DType::F8E4M3 => Err(Error::Other(
             "π0.5 RMSNorm parameters cannot be stored as unscaled FP8".into(),
+        )),
+        DType::U8 | DType::I8 | DType::I32 | DType::I64 => Err(Error::Other(
+            "π0.5 RMSNorm parameters cannot be integer carriers".into(),
         )),
     }
 }

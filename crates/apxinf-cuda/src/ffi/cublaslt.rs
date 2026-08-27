@@ -13,45 +13,6 @@ extern "C" {
         k: i32,
         heuristic_rank: i32,
     ) -> cublasStatus_t;
-    pub fn apxinf_static_set_cublaslt_bf16_gemm_custom(
-        m: i32,
-        n: i32,
-        k: i32,
-        tile_id: i32,
-        custom_option: i32,
-        stages_id: i32,
-        cluster_shape_id: i32,
-    ) -> cublasStatus_t;
-    pub fn apxinf_static_set_cublaslt_bf16_gemm_split_custom(
-        m: i32,
-        n: i32,
-        k: i32,
-        tile_id: i32,
-        custom_option: i32,
-        stages_id: i32,
-        cluster_shape_id: i32,
-    ) -> cublasStatus_t;
-    pub fn apxinf_static_prepare_bf16_gemm_split(m: i32, n: i32, k: i32) -> cublasStatus_t;
-    pub fn apxinf_static_bf16_gemm_split(
-        activation: *const c_void,
-        weight: *const c_void,
-        output: *mut c_void,
-        m: i32,
-        n: i32,
-        k: i32,
-        alpha: f32,
-        stream: cudaStream_t,
-    ) -> cublasStatus_t;
-    pub fn apxinf_static_bf16_gemm_split_first(
-        activation: *const c_void,
-        weight: *const c_void,
-        output: *mut c_void,
-        m: i32,
-        n: i32,
-        k: i32,
-        alpha: f32,
-        stream: cudaStream_t,
-    ) -> cublasStatus_t;
     pub fn apxinf_static_bf16_gemm(
         activation: *const c_void,
         weight: *const c_void,
@@ -86,7 +47,6 @@ extern "C" {
     pub fn apxinf_static_native_fp8_supported(device: i32, supported: *mut i32) -> cudaError_t;
     /// Install immutable cuBLASLt resources for one FP8 GEMM shape.
     pub fn apxinf_static_prepare_fp8_gemm_f16(m: i32, n: i32, k: i32) -> cublasStatus_t;
-    pub fn apxinf_static_prepare_fp8_gemm_split_f16(m: i32, n: i32, k: i32) -> cublasStatus_t;
     /// Install a fused GELU plan and bind its stable bias/scale resources.
     pub fn apxinf_static_prepare_fp8_gemm_bias_gelu_e4m3(
         bias: *const c_void,
@@ -110,26 +70,6 @@ extern "C" {
     ) -> cublasStatus_t;
     /// Static E4M3 x E4M3 GEMM with FP16 output. Returns cublasStatus_t.
     pub fn apxinf_static_fp8_gemm_f16(
-        activation: *const c_void,
-        weight: *const c_void,
-        output: *mut c_void,
-        m: i32,
-        n: i32,
-        k: i32,
-        alpha: f32,
-        stream: cudaStream_t,
-    ) -> cublasStatus_t;
-    pub fn apxinf_static_fp8_gemm_split_f16(
-        activation: *const c_void,
-        weight: *const c_void,
-        output: *mut c_void,
-        m: i32,
-        n: i32,
-        k: i32,
-        alpha: f32,
-        stream: cudaStream_t,
-    ) -> cublasStatus_t;
-    pub fn apxinf_static_fp8_gemm_split_first_f16(
         activation: *const c_void,
         weight: *const c_void,
         output: *mut c_void,
@@ -181,33 +121,6 @@ extern "C" {
         n: i32,
         k: i32,
         heuristic_rank: i32,
-    ) -> cublasStatus_t;
-    pub fn apxinf_static_set_cublaslt_fp8_gemm_custom(
-        m: i32,
-        n: i32,
-        k: i32,
-        tile_id: i32,
-        custom_option: i32,
-        stages_id: i32,
-        cluster_shape_id: i32,
-    ) -> cublasStatus_t;
-    pub fn apxinf_static_set_cublaslt_fp8_gemm_split_custom(
-        m: i32,
-        n: i32,
-        k: i32,
-        tile_id: i32,
-        custom_option: i32,
-        stages_id: i32,
-        cluster_shape_id: i32,
-    ) -> cublasStatus_t;
-    pub fn apxinf_static_set_cublaslt_fp8_gemm_bias_custom(
-        m: i32,
-        n: i32,
-        k: i32,
-        tile_id: i32,
-        custom_option: i32,
-        stages_id: i32,
-        cluster_shape_id: i32,
     ) -> cublasStatus_t;
     pub fn apxinf_static_autotune_cublaslt_fp8_gemm_f16(
         activation: *const c_void,

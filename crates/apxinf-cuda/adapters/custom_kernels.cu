@@ -5,10 +5,7 @@
 #include <cuda_fp8.h>
 #include <cuda_runtime.h>
 
-#include <cmath>
 #include <cstdint>
-#include <cstdlib>
-#include <cstring>
 
 namespace {
 #include "../kernels/custom/math.cuh"
@@ -22,26 +19,6 @@ namespace {
 #include "../kernels/custom/elementwise.cuh"
 #include "../kernels/custom/fused.cuh"
 #include "../kernels/custom/cache.cuh"
-}  // namespace
-
-namespace {
-
-// Resolve the validated action Ada packed8 route before CUDA graph capture.
-// Auto enables it only for the exact supported shape.
-const int kActionAdaPacked8Mode = [] {
-    const char* value = std::getenv("APXINF_PI05_ACTION_ADA_PACKED8");
-    if (value == nullptr || std::strcmp(value, "auto") == 0) {
-      return 2;
-    }
-    if (std::strcmp(value, "0") == 0 || std::strcmp(value, "off") == 0) {
-      return 0;
-    }
-    if (std::strcmp(value, "1") == 0 || std::strcmp(value, "on") == 0) {
-      return 1;
-    }
-    return -1;
-  }();
-
 }  // namespace
 
 extern "C" cudaError_t apxinf_static_evict_l2(
@@ -370,25 +347,6 @@ extern "C" cudaError_t apxinf_static_ada_gate_residual_rms_norm_quant_f16_e4m3(
     const void* norm_style, void* hidden, void* normalized, int rows, int cols,
     float eps, float scale, cudaStream_t stream) {
   if (rows <= 0 || cols <= 0 || !(scale > 0.0f)) return cudaErrorInvalidValue;
-  const int packed8_mode = kActionAdaPacked8Mode;
-  if (packed8_mode < 0) return cudaErrorInvalidValue;
-  const bool packed8_exact_shape = rows == 10 && cols == 1024;
-  if (packed8_mode == 1 && !packed8_exact_shape) return cudaErrorInvalidValue;
-  if (packed8_mode != 0 && packed8_exact_shape) {
-    if (!std::isfinite(scale) ||
-        projection == nullptr || residual == nullptr || gate_style == nullptr ||
-        norm_style == nullptr || hidden == nullptr || normalized == nullptr) {
-      return cudaErrorInvalidValue;
-    }
-    ada_gate_residual_rms_norm_quant_f16_e4m3_packed8_kernel
-        <<<rows, 256, 0, stream>>>(
-            static_cast<const half*>(projection),
-            static_cast<const half*>(residual),
-            static_cast<const half*>(gate_style),
-            static_cast<const half*>(norm_style), static_cast<half*>(hidden),
-            static_cast<__nv_fp8_e4m3*>(normalized), eps, 1.0f / scale);
-    return cudaGetLastError();
-  }
   ada_gate_residual_rms_norm_quant_f16_e4m3_kernel<<<rows, 256, 0, stream>>>(
       static_cast<const half*>(projection), static_cast<const half*>(residual),
       static_cast<const half*>(gate_style), static_cast<const half*>(norm_style),

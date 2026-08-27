@@ -1,5 +1,6 @@
 mod bf16;
 mod fp8;
+mod w4a16;
 mod w8a8;
 
 use apxinf_core::{DType, Device, Error, Result, Tensor};
@@ -9,22 +10,21 @@ use crate::buffer::CudaBuffer;
 use crate::context::CudaContext;
 use crate::cublas::CublasTranspose;
 
-pub use bf16::{
-    autotune_cublaslt_bf16, gemm_bf16 as bf16, gemm_bf16_geglu_fused as bf16_geglu_fused,
-    Bf16AutotuneResult,
-};
+pub use bf16::{autotune_cublaslt_bf16, gemm_bf16 as bf16, gemm_bf16_last_row, Bf16AutotuneResult};
+#[cfg(apxinf_cutlass_gemm)]
 pub use fp8::autotune_cutlass_gemm_f16 as autotune_cutlass_fp8;
 #[cfg(test)]
 pub(crate) use fp8::prepare_cublaslt_fp8_gemm;
 pub use fp8::{
     autotune_cublaslt_gemm_f16 as autotune_cublaslt_fp8, cold_l2_tuning_metadata, exact_fp8_tactic,
-    gemm_fp8 as fp8, gemm_fp8_geglu_fused as fp8_geglu_fused, install_tuning_db,
-    install_tuning_dbs, native_fp8_gemm_supported as native_fp8_supported, ColdL2TuningMetadata,
+    gemm_fp8 as fp8, install_tuning_db, install_tuning_dbs,
+    native_fp8_gemm_supported as native_fp8_supported, ColdL2TuningMetadata,
     CublasLtAlgorithmTiming, CutlassTacticTiming, Fp8WeightView,
 };
 #[cfg(test)]
 pub(crate) use w8a8::gemm_w8a8_with_preference;
 pub use w8a8::{gemm_w8a8 as w8a8, W8A8Layout, W8A8ScaleMode, W8A8WeightView};
+pub use w4a16::{dequant_w4a16_bf16, gemm_w4a16 as w4a16, W4A16WeightView};
 
 pub fn matmul(ctx: &CudaContext, activation: &Tensor, weight: &Tensor) -> Result<Tensor> {
     if activation.dtype() != weight.dtype() {

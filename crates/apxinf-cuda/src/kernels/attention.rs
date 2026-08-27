@@ -143,6 +143,111 @@ fn gqa_values(
         .map_err(Error::Cuda)
 }
 
+
+#[allow(clippy::too_many_arguments)]
+fn gqa_scores_batched(
+    ctx: &CudaContext,
+    dtype: DType,
+    query: &Tensor,
+    query_offset: usize,
+    key_cache: &CudaBuffer,
+    key_offset: usize,
+    scores: &CudaBuffer,
+    scores_offset: usize,
+    gqa_ratio: usize,
+    q_rows: usize,
+    n_heads: usize,
+    kv_len: usize,
+    head_dim: usize,
+) -> Result<()> {
+    let element_bytes = dtype.size_in_bytes();
+    let query = tensor_slice(
+        query,
+        query_offset * element_bytes,
+        ((q_rows - 1) * n_heads * head_dim + gqa_ratio * head_dim) * element_bytes,
+        ctx.device_id(),
+    )?;
+    let key = buffer_slice(
+        key_cache,
+        key_offset * element_bytes,
+        kv_len * head_dim * element_bytes,
+    )?;
+    let output = buffer_slice(
+        scores,
+        scores_offset * element_bytes,
+        ((q_rows - 1) * n_heads * kv_len + gqa_ratio * kv_len) * element_bytes,
+    )?;
+    ctx.cublas()
+        .batched_gemm_transpose_b(
+            dtype,
+            gqa_ratio,
+            kv_len,
+            head_dim,
+            1.0,
+            &query,
+            (n_heads * head_dim) as i64,
+            &key,
+            0,
+            0.0,
+            &output,
+            (n_heads * kv_len) as i64,
+            q_rows as i32,
+        )
+        .map_err(Error::Cuda)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn gqa_values_batched(
+    ctx: &CudaContext,
+    dtype: DType,
+    attention: &Tensor,
+    attention_offset: usize,
+    value_cache: &CudaBuffer,
+    value_offset: usize,
+    output: &CudaBuffer,
+    output_offset: usize,
+    gqa_ratio: usize,
+    q_rows: usize,
+    n_heads: usize,
+    kv_len: usize,
+    head_dim: usize,
+) -> Result<()> {
+    let element_bytes = dtype.size_in_bytes();
+    let attention = tensor_slice(
+        attention,
+        attention_offset * element_bytes,
+        ((q_rows - 1) * n_heads * kv_len + gqa_ratio * kv_len) * element_bytes,
+        ctx.device_id(),
+    )?;
+    let value = buffer_slice(
+        value_cache,
+        value_offset * element_bytes,
+        kv_len * head_dim * element_bytes,
+    )?;
+    let output = buffer_slice(
+        output,
+        output_offset * element_bytes,
+        ((q_rows - 1) * n_heads * head_dim + gqa_ratio * head_dim) * element_bytes,
+    )?;
+    ctx.cublas()
+        .batched_gemm(
+            dtype,
+            gqa_ratio,
+            head_dim,
+            kv_len,
+            1.0,
+            &attention,
+            (n_heads * kv_len) as i64,
+            &value,
+            0,
+            0.0,
+            &output,
+            (n_heads * head_dim) as i64,
+            q_rows as i32,
+        )
+        .map_err(Error::Cuda)
+}
+
 /// GQA scaled-dot-product attention over an existing CUDA KV cache.
 #[allow(clippy::too_many_arguments)]
 pub fn sdpa(
@@ -156,6 +261,7 @@ pub fn sdpa(
     kv_len: usize,
     max_seq_len: usize,
     kv_offset: u32,
+    request_seq_len: usize,
 ) -> Result<Tensor> {
     if n_kv_heads == 0 || n_heads == 0 || n_heads % n_kv_heads != 0 {
         return Err(Error::Other(format!(
@@ -188,51 +294,73 @@ pub fn sdpa(
     let seq_len = query_dims[0];
     let gqa_ratio = n_heads / n_kv_heads;
     let dtype = query.dtype();
+    #[cfg(apxinf_fa2_sm80)]
+    if dtype == DType::BF16
+        && n_heads == 24
+        && n_kv_heads == 4
+        && head_dim == 256
+        && matches!(request_seq_len, 2048 | 4096 | 16384)
+    {
+        return fa2_gqa_prefill_headfirst_kv(
+            ctx,
+            query,
+            cache.k_buffer(layer_idx),
+            cache.v_buffer(layer_idx),
+            seq_len,
+            n_heads,
+            n_kv_heads,
+            head_dim,
+            kv_offset,
+            max_seq_len,
+        );
+    }
     let element_bytes = dtype.size_in_bytes();
-    let scores = CudaBuffer::alloc(seq_len * n_heads * kv_len * element_bytes, ctx.device_id())
+    let output = CudaBuffer::alloc(seq_len * n_heads * head_dim * element_bytes, ctx.device_id())
         .map_err(Error::Cuda)?;
     let key_cache = cache.k_buffer(layer_idx);
+    let value_cache = cache.v_buffer(layer_idx);
 
-    for kv_head in 0..n_kv_heads {
-        for sequence in 0..seq_len {
-            gqa_scores(
+    // Full prefill scores are quadratic in the prompt length. Process query
+    // rows in bounded chunks so 8K/16K prompts avoid a multi-GB temporary.
+    const QUERY_CHUNK: usize = 512;
+    for q_start in (0..seq_len).step_by(QUERY_CHUNK) {
+        let q_rows = (seq_len - q_start).min(QUERY_CHUNK);
+        let scores = CudaBuffer::alloc(q_rows * n_heads * kv_len * element_bytes, ctx.device_id())
+            .map_err(Error::Cuda)?;
+        for kv_head in 0..n_kv_heads {
+            gqa_scores_batched(
                 ctx,
                 dtype,
                 query,
-                (sequence * n_heads + kv_head * gqa_ratio) * head_dim,
+                (q_start * n_heads + kv_head * gqa_ratio) * head_dim,
                 key_cache,
                 kv_head * max_seq_len * head_dim,
                 &scores,
-                (sequence * n_heads + kv_head * gqa_ratio) * kv_len,
+                kv_head * gqa_ratio * kv_len,
                 gqa_ratio,
+                q_rows,
+                n_heads,
                 kv_len,
                 head_dim,
             )?;
         }
-    }
 
-    let scores = scores.into_tensor(Shape::new(vec![seq_len * n_heads, kv_len]), dtype);
-    let scores = super::elementwise::scale(ctx, &scores, 1.0 / (head_dim as f32).sqrt())?;
-    let attention = softmax_causal(ctx, &scores, kv_offset, n_heads as u32)?;
-
-    let output = CudaBuffer::alloc(
-        seq_len * n_heads * head_dim * element_bytes,
-        ctx.device_id(),
-    )
-    .map_err(Error::Cuda)?;
-    let value_cache = cache.v_buffer(layer_idx);
-    for kv_head in 0..n_kv_heads {
-        for sequence in 0..seq_len {
-            gqa_values(
+        let scores = scores.into_tensor(Shape::new(vec![q_rows * n_heads, kv_len]), dtype);
+        let scores = super::elementwise::scale(ctx, &scores, 1.0 / (head_dim as f32).sqrt())?;
+        let attention = softmax_causal(ctx, &scores, kv_offset + q_start as u32, n_heads as u32)?;
+        for kv_head in 0..n_kv_heads {
+            gqa_values_batched(
                 ctx,
                 dtype,
                 &attention,
-                (sequence * n_heads + kv_head * gqa_ratio) * kv_len,
+                kv_head * gqa_ratio * kv_len,
                 value_cache,
                 kv_head * max_seq_len * head_dim,
                 &output,
-                (sequence * n_heads + kv_head * gqa_ratio) * head_dim,
+                (q_start * n_heads + kv_head * gqa_ratio) * head_dim,
                 gqa_ratio,
+                q_rows,
+                n_heads,
                 kv_len,
                 head_dim,
             )?;
@@ -541,6 +669,92 @@ pub fn split_qkv_bias_bf16(
 
 #[cfg(apxinf_fa2_sm80)]
 #[allow(clippy::too_many_arguments)]
+fn fa2_gqa_prefill_headfirst_kv(
+    ctx: &CudaContext,
+    query: &Tensor,
+    key_cache: &CudaBuffer,
+    value_cache: &CudaBuffer,
+    seq_len: usize,
+    n_heads: usize,
+    n_kv_heads: usize,
+    head_dim: usize,
+    kv_offset: u32,
+    max_seq_len: usize,
+) -> Result<Tensor> {
+    if query.dtype() != DType::BF16 {
+        return Err(Error::Other("FA2 GQA prefill requires BF16 query".into()));
+    }
+    let bytes = DType::BF16.size_in_bytes();
+    let row_elements = n_heads
+        .checked_mul(head_dim)
+        .ok_or_else(|| Error::Other("FA2 query row size overflow".into()))?;
+    let output = output_buffer(
+        ctx,
+        seq_len
+            .checked_mul(row_elements)
+            .and_then(|x| x.checked_mul(bytes))
+            .ok_or_else(|| Error::Other("FA2 output size overflow".into()))?,
+    )?;
+    const QUERY_CHUNK: usize = 512;
+    for q_start in (0..seq_len).step_by(QUERY_CHUNK) {
+        let q_rows = (seq_len - q_start).min(QUERY_CHUNK);
+        let q_offset = q_start
+            .checked_mul(row_elements)
+            .and_then(|x| x.checked_mul(bytes))
+            .ok_or_else(|| Error::Other("FA2 query offset overflow".into()))?;
+        let q_bytes = q_rows
+            .checked_mul(row_elements)
+            .and_then(|x| x.checked_mul(bytes))
+            .ok_or_else(|| Error::Other("FA2 query slice overflow".into()))?;
+        let q = tensor_slice(query, q_offset, q_bytes, ctx.device_id())?;
+        let output_offset = q_offset;
+        let output_view = buffer_slice(&output, output_offset, q_bytes)?;
+        let key_tokens = (kv_offset as usize)
+            .checked_add(q_start)
+            .and_then(|x| x.checked_add(q_rows))
+            .ok_or_else(|| Error::Other("FA2 key length overflow".into()))?;
+        if key_tokens > max_seq_len {
+            return Err(Error::Other(format!(
+                "FA2 key length {key_tokens} exceeds cache capacity {max_seq_len}"
+            )));
+        }
+        let lse = output_buffer(
+            ctx,
+            q_rows
+                .checked_mul(n_heads)
+                .and_then(|x| x.checked_mul(std::mem::size_of::<f32>()))
+                .ok_or_else(|| Error::Other("FA2 LSE size overflow".into()))?,
+        )?;
+        unsafe {
+            ffi::check_cuda(ffi::apxinf_static_fa2_bf16_causal_headfirst_kv(
+                q.ptr(),
+                key_cache.ptr(),
+                value_cache.ptr(),
+                output_view.ptr(),
+                lse.ptr(),
+                1,
+                q_rows as i32,
+                key_tokens as i32,
+                n_heads as i32,
+                n_kv_heads as i32,
+                head_dim as i32,
+                max_seq_len as i32,
+                (head_dim as f32).sqrt().recip(),
+                ctx.stream().handle(),
+            ))
+            .map_err(Error::Cuda)?;
+        }
+    }
+    Ok(make_gpu_tensor(
+        Shape::new(vec![seq_len, row_elements]),
+        DType::BF16,
+        ctx.device_id(),
+        output,
+    ))
+}
+
+#[cfg(apxinf_fa2_sm80)]
+#[allow(clippy::too_many_arguments)]
 fn fa2_attention(
     ctx: &CudaContext,
     q: &Tensor,
@@ -580,108 +794,6 @@ fn fa2_attention(
             kv_heads as i32,
             head_dim as i32,
             (head_dim as f32).sqrt().recip(),
-            ctx.stream().handle(),
-        ))
-        .map_err(Error::Cuda)?;
-    }
-    Ok(make_gpu_tensor(
-        q.shape().clone(),
-        DType::BF16,
-        ctx.device_id(),
-        output,
-    ))
-}
-
-#[cfg(apxinf_fa2_sm80)]
-fn fa2_splitkv_enabled(
-    query_tokens: usize,
-    key_tokens: usize,
-    query_heads: usize,
-    kv_heads: usize,
-    head_dim: usize,
-) -> bool {
-    if std::env::var_os("APXINF_DISABLE_FA2_SPLITKV").is_some() {
-        return false;
-    }
-    query_tokens <= 64
-        && key_tokens > query_tokens
-        && query_heads > kv_heads
-        && head_dim == 256
-}
-
-#[cfg(apxinf_fa2_sm80)]
-#[allow(clippy::too_many_arguments)]
-fn fa2_attention_splitkv(
-    ctx: &CudaContext,
-    q: &Tensor,
-    k: &Tensor,
-    v: &Tensor,
-    batches: usize,
-    query_tokens: usize,
-    key_tokens: usize,
-    query_heads: usize,
-    kv_heads: usize,
-    head_dim: usize,
-) -> Result<Tensor> {
-    let output = output_buffer(ctx, q.size_in_bytes())?;
-    let lse_elements = batches
-        .checked_mul(query_heads)
-        .and_then(|value| value.checked_mul(query_tokens))
-        .ok_or_else(|| Error::Other("static inference BF16 split-KV LSE size overflow".into()))?;
-    let softmax_lse = output_buffer(
-        ctx,
-        lse_elements
-            .checked_mul(std::mem::size_of::<f32>())
-            .ok_or_else(|| Error::Other("static inference BF16 split-KV LSE overflow".into()))?,
-    )?;
-    let block_n = if head_dim <= 64 {
-        256
-    } else if head_dim <= 128 {
-        128
-    } else {
-        64
-    };
-    let max_splits = key_tokens.div_ceil(block_n).min(128);
-    let softmax_lse_accum = output_buffer(
-        ctx,
-        max_splits
-            .checked_mul(lse_elements)
-            .and_then(|value| value.checked_mul(std::mem::size_of::<f32>()))
-            .ok_or_else(|| {
-                Error::Other("static inference BF16 split-KV LSE accum overflow".into())
-            })?,
-    )?;
-    let o_accum_elements = max_splits
-        .checked_mul(batches)
-        .and_then(|value| value.checked_mul(query_tokens))
-        .and_then(|value| value.checked_mul(query_heads))
-        .and_then(|value| value.checked_mul(head_dim))
-        .ok_or_else(|| Error::Other("static inference BF16 split-KV O accum overflow".into()))?;
-    let o_accum = output_buffer(
-        ctx,
-        o_accum_elements
-            .checked_mul(std::mem::size_of::<f32>())
-            .ok_or_else(|| {
-                Error::Other("static inference BF16 split-KV O accum byte overflow".into())
-            })?,
-    )?;
-    unsafe {
-        ffi::check_cuda(ffi::apxinf_static_fa2_bf16_splitkv(
-            gpu_ptr(q)?,
-            gpu_ptr(k)?,
-            gpu_ptr(v)?,
-            output.ptr(),
-            softmax_lse.ptr(),
-            softmax_lse_accum.ptr(),
-            o_accum.ptr(),
-            batches as i32,
-            query_tokens as i32,
-            key_tokens as i32,
-            query_heads as i32,
-            kv_heads as i32,
-            head_dim as i32,
-            (head_dim as f32).sqrt().recip(),
-            ctx.caps().multiprocessor_count as i32,
             ctx.stream().handle(),
         ))
         .map_err(Error::Cuda)?;
@@ -751,11 +863,6 @@ pub fn mqa_bf16(
     }
     #[cfg(apxinf_fa2_sm80)]
     {
-        if fa2_splitkv_enabled(q_shape[0], key_tokens, q_shape[1], 1, q_shape[2]) {
-            return fa2_attention_splitkv(
-                ctx, q, k, v, 1, q_shape[0], key_tokens, q_shape[1], 1, q_shape[2],
-            );
-        }
         return fa2_attention(
             ctx, q, k, v, 1, q_shape[0], key_tokens, q_shape[1], 1, q_shape[2],
         );
@@ -1299,70 +1406,4 @@ pub fn mqa_f16(ctx: &CudaContext, q: &Tensor, k: &Tensor, v: &Tensor) -> Result<
     }
     #[cfg(not(apxinf_fa2_f16_sm100))]
     cublas_mqa_f16(ctx, q, k, v, k_shape[0])
-}
-
-pub fn mqa_f16_e4m3_522(
-    ctx: &CudaContext,
-    q: &Tensor,
-    k: &Tensor,
-    v: &Tensor,
-    output_scale: f32,
-) -> Result<Tensor> {
-    let q_shape = q.shape().dims();
-    let k_shape = k.shape().dims();
-    if q.dtype() != DType::F16
-        || k.dtype() != DType::F16
-        || v.dtype() != DType::F16
-        || q_shape != [522, 8, 256]
-        || k_shape != [522, 1, 256]
-        || v.shape().dims() != k_shape
-        || !output_scale.is_finite()
-        || output_scale <= 0.0
-    {
-        return Err(Error::Other(format!(
-            "FA2 direct E4M3 requires FP16 Q [522,8,256], K/V [522,1,256] and finite positive scale; got q={q_shape:?}, k={k_shape:?}, v={:?}, scale={output_scale}",
-            v.shape().dims()
-        )));
-    }
-    #[cfg(apxinf_fa2_direct_e4m3_sm100)]
-    {
-        let output = output_buffer(ctx, q.numel())?;
-        let lse_elements = q_shape[0]
-            .checked_mul(q_shape[1])
-            .ok_or_else(|| Error::Other("FA2 direct E4M3 LSE size overflow".into()))?;
-        let softmax_lse = output_buffer(
-            ctx,
-            lse_elements
-                .checked_mul(std::mem::size_of::<f32>())
-                .ok_or_else(|| Error::Other("FA2 direct E4M3 LSE byte size overflow".into()))?,
-        )?;
-        unsafe {
-            ffi::check_cuda(ffi::apxinf_static_fa2_f16_direct_e4m3_522(
-                gpu_ptr(q)?,
-                gpu_ptr(k)?,
-                gpu_ptr(v)?,
-                output.ptr(),
-                softmax_lse.ptr(),
-                1,
-                522,
-                522,
-                8,
-                1,
-                256,
-                output_scale,
-                ctx.stream().handle(),
-            ))
-            .map_err(Error::Cuda)?;
-        }
-        return Ok(make_gpu_tensor(
-            q.shape().clone(),
-            DType::F8E4M3,
-            ctx.device_id(),
-            output,
-        ));
-    }
-    #[cfg(not(apxinf_fa2_direct_e4m3_sm100))]
-    Err(Error::Other(
-        "FA2 direct E4M3 requires an SM100-family FA2 build".into(),
-    ))
 }

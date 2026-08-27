@@ -19,7 +19,6 @@
 //!     [--num-flow-steps N] [--max-token-len N]            (random-only overrides)
 //!     [--token-count T] [--iterations N] [--seed N]
 //!     [--image-input patches|nhwc|nchw] [--reference <json>] [--min-cosine C]
-//!     [--images-u8 <raw>] [--token-ids-u32le <raw>] [--noise-bf16-u16le <raw>]
 //! ```
 //!
 //! nsys: set `APXINF_PI05_PROFILE_REPLAY=1` to wrap exactly one steady-state
@@ -36,10 +35,9 @@ use apxinf_core::{Backend, DType, Tensor};
 use apxinf_cuda::{CudaBackend, CudaBuffer};
 use apxinf_model::pi05::{
     upload_time_embeddings, upload_time_embeddings_bf16, upload_time_embeddings_int8,
-    Pi05ActivationScales, Pi05Bf16CapturedGraph, Pi05Bf16CudaRuntime, Pi05CapturedGraph,
-    Pi05Config, Pi05CudaRuntime, Pi05ImageLayout, Pi05Int8CapturedGraph, Pi05Int8CudaRuntime,
-    Pi05Weights, StaticBf16Pi05Weights, StaticFp8Calibration, StaticFp8Pi05Weights,
-    StaticInt8Pi05Weights,
+    Pi05ActivationScales, Pi05Bf16CapturedGraph, Pi05Bf16CudaRuntime, Pi05CapturedGraph, Pi05Config,
+    Pi05CudaRuntime, Pi05ImageLayout, Pi05Int8CapturedGraph, Pi05Int8CudaRuntime, Pi05Weights,
+    StaticBf16Pi05Weights, StaticFp8Calibration, StaticFp8Pi05Weights, StaticInt8Pi05Weights,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -292,8 +290,7 @@ impl ImageInput {
         let value = match spec {
             Some(value) => value,
             None => {
-                owned =
-                    std::env::var("APXINF_PI05_IMAGE_INPUT").unwrap_or_else(|_| "patches".into());
+                owned = std::env::var("APXINF_PI05_IMAGE_INPUT").unwrap_or_else(|_| "patches".into());
                 owned.as_str()
             }
         };
@@ -336,11 +333,7 @@ impl ErrorMetrics {
             )
             .into());
         }
-        if actual
-            .iter()
-            .chain(expected)
-            .any(|value| !value.is_finite())
-        {
+        if actual.iter().chain(expected).any(|value| !value.is_finite()) {
             return Err("integrity comparison contains a non-finite value".into());
         }
 
@@ -404,27 +397,11 @@ fn raw_image_fixture(
     config: &Pi05Config,
     layout: Pi05ImageLayout,
     io_dtype: DType,
-    fixture_path: Option<&str>,
 ) -> Result<(Vec<u8>, Tensor), Box<dyn std::error::Error>> {
     let image_bytes = config.num_views * config.image_size * config.image_size * 3;
-    let nhwc = if let Some(path) = fixture_path {
-        if !matches!(layout, Pi05ImageLayout::Nhwc) {
-            return Err("--images-u8 currently requires --image-input nhwc".into());
-        }
-        let bytes = std::fs::read(path)?;
-        if bytes.len() != image_bytes {
-            return Err(format!(
-                "--images-u8 length mismatch: expected {image_bytes}, got {}",
-                bytes.len()
-            )
-            .into());
-        }
-        bytes
-    } else {
-        (0..image_bytes)
-            .map(|index| ((index * 73 + index / 11 + 19) & 0xff) as u8)
-            .collect::<Vec<_>>()
-    };
+    let nhwc = (0..image_bytes)
+        .map(|index| ((index * 73 + index / 11 + 19) & 0xff) as u8)
+        .collect::<Vec<_>>();
     let wire_images = match layout {
         Pi05ImageLayout::Nhwc => nhwc.clone(),
         Pi05ImageLayout::Nchw => {
@@ -494,83 +471,8 @@ fn raw_image_fixture(
     Ok((wire_images, patches))
 }
 
-fn token_fixture(
-    path: Option<&str>,
-    token_count: usize,
-) -> Result<Vec<u32>, Box<dyn std::error::Error>> {
-    let Some(path) = path else {
-        return Ok(vec![0; token_count]);
-    };
-    let bytes = std::fs::read(path)?;
-    if bytes.len() != token_count * 4 {
-        return Err(format!(
-            "--token-ids-u32le length mismatch: expected {}, got {}",
-            token_count * 4,
-            bytes.len()
-        )
-        .into());
-    }
-    Ok(bytes
-        .chunks_exact(4)
-        .map(|chunk| u32::from_le_bytes(chunk.try_into().unwrap()))
-        .collect())
-}
-
-fn noise_fixture(
-    path: Option<&str>,
-    config: &Pi05Config,
-    io_dtype: DType,
-) -> Result<Tensor, Box<dyn std::error::Error>> {
-    let elements = config.action_horizon * config.action_dim;
-    let Some(path) = path else {
-        return Ok(Tensor::zeros(
-            vec![config.action_horizon, config.action_dim],
-            io_dtype,
-        ));
-    };
-    let bytes = std::fs::read(path)?;
-    if bytes.len() != elements * 2 {
-        return Err(format!(
-            "--noise-bf16-u16le length mismatch: expected {}, got {}",
-            elements * 2,
-            bytes.len()
-        )
-        .into());
-    }
-    let values = bytes
-        .chunks_exact(2)
-        .map(|chunk| half::bf16::from_bits(u16::from_le_bytes(chunk.try_into().unwrap())).to_f32())
-        .collect::<Vec<_>>();
-    Ok(match io_dtype {
-        DType::F16 => Tensor::from_f16(
-            vec![config.action_horizon, config.action_dim],
-            &values
-                .iter()
-                .map(|&value| half::f16::from_f32(value))
-                .collect::<Vec<_>>(),
-        )?,
-        _ => Tensor::from_bf16(
-            vec![config.action_horizon, config.action_dim],
-            &values
-                .iter()
-                .map(|&value| half::bf16::from_f32(value))
-                .collect::<Vec<_>>(),
-        )?,
-    })
-}
-
 fn latency_json(mut milliseconds: Vec<f64>) -> serde_json::Value {
     milliseconds.sort_by(f64::total_cmp);
-    let sample_count = milliseconds.len() as f64;
-    let mean = milliseconds.iter().sum::<f64>() / sample_count;
-    let variance = milliseconds
-        .iter()
-        .map(|sample| {
-            let delta = sample - mean;
-            delta * delta
-        })
-        .sum::<f64>()
-        / sample_count;
     let percentile = |fraction: f64| {
         let index = ((milliseconds.len() - 1) as f64 * fraction).round() as usize;
         milliseconds[index]
@@ -579,9 +481,7 @@ fn latency_json(mut milliseconds: Vec<f64>) -> serde_json::Value {
         "min": milliseconds[0],
         "p50": percentile(0.50),
         "p95": percentile(0.95),
-        "max": milliseconds[milliseconds.len() - 1],
-        "mean": mean,
-        "standard_deviation": variance.sqrt()
+        "max": milliseconds[milliseconds.len() - 1]
     })
 }
 
@@ -670,9 +570,6 @@ struct Args {
     reference: Option<String>,
     min_cosine: Option<f64>,
     image_input: Option<String>,
-    images_u8: Option<String>,
-    token_ids_u32le: Option<String>,
-    noise_bf16_u16le: Option<String>,
 }
 
 impl Args {
@@ -701,35 +598,26 @@ impl Args {
         let mut reference = None;
         let mut min_cosine = None;
         let mut image_input = None;
-        let mut images_u8 = None;
-        let mut token_ids_u32le = None;
-        let mut noise_bf16_u16le = None;
 
         let mut index = 1;
         while index < raw.len() {
             let argument = raw[index].as_str();
             match argument {
-                "--dtype" => {
-                    dtype = Some(Dtype::parse(&expect_value(raw, &mut index, "--dtype")?)?)
-                }
-                "--calibration" => {
-                    calibration = Some(expect_value(raw, &mut index, "--calibration")?)
-                }
+                "--dtype" => dtype = Some(Dtype::parse(&expect_value(raw, &mut index, "--dtype")?)?),
+                "--calibration" => calibration = Some(expect_value(raw, &mut index, "--calibration")?),
                 "--tactics" => tactics = Some(expect_value(raw, &mut index, "--tactics")?),
                 "--views" => views = Some(expect_value(raw, &mut index, "--views")?.parse()?),
                 "--image-size" => {
                     image_size = Some(expect_value(raw, &mut index, "--image-size")?.parse()?)
                 }
                 "--action-horizon" => {
-                    action_horizon =
-                        Some(expect_value(raw, &mut index, "--action-horizon")?.parse()?)
+                    action_horizon = Some(expect_value(raw, &mut index, "--action-horizon")?.parse()?)
                 }
                 "--action-dim" => {
                     action_dim = Some(expect_value(raw, &mut index, "--action-dim")?.parse()?)
                 }
                 "--num-flow-steps" => {
-                    num_flow_steps =
-                        Some(expect_value(raw, &mut index, "--num-flow-steps")?.parse()?)
+                    num_flow_steps = Some(expect_value(raw, &mut index, "--num-flow-steps")?.parse()?)
                 }
                 "--max-token-len" => {
                     max_token_len = Some(expect_value(raw, &mut index, "--max-token-len")?.parse()?)
@@ -747,13 +635,6 @@ impl Args {
                 }
                 "--image-input" => {
                     image_input = Some(expect_value(raw, &mut index, "--image-input")?)
-                }
-                "--images-u8" => images_u8 = Some(expect_value(raw, &mut index, "--images-u8")?),
-                "--token-ids-u32le" => {
-                    token_ids_u32le = Some(expect_value(raw, &mut index, "--token-ids-u32le")?)
-                }
-                "--noise-bf16-u16le" => {
-                    noise_bf16_u16le = Some(expect_value(raw, &mut index, "--noise-bf16-u16le")?)
                 }
                 other if other.starts_with("--") => {
                     return Err(format!("unknown flag `{other}`").into());
@@ -794,9 +675,6 @@ impl Args {
             reference,
             min_cosine,
             image_input,
-            images_u8,
-            token_ids_u32le,
-            noise_bf16_u16le,
         })
     }
 }
@@ -809,8 +687,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
              [--calibration <json|uniform:SCALE>] [--tactics <json>] [--views N] \
              [--image-size N] [--action-horizon N] [--action-dim N] [--num-flow-steps N] \
              [--max-token-len N] [--token-count T] [--iterations N] [--seed N] \
-             [--image-input patches|nhwc|nchw] [--reference <json>] [--min-cosine C] \
-             [--images-u8 <raw>] [--token-ids-u32le <raw>] [--noise-bf16-u16le <raw>]",
+             [--image-input patches|nhwc|nchw] [--reference <json>] [--min-cosine C]",
             raw.first().map(String::as_str).unwrap_or("pi05_bench")
         )
     })?;
@@ -821,9 +698,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token_count = args.token_count;
     let iterations = args.iterations;
     let image_input = ImageInput::resolve(args.image_input.as_deref())?;
-    if args.images_u8.is_some() && !matches!(image_input, ImageInput::Rgb(_)) {
-        return Err("--images-u8 requires --image-input nhwc".into());
-    }
 
     // Architecture overrides only apply to synthetic weights; a real checkpoint's
     // tensors are fixed to the config it was exported with.
@@ -848,17 +722,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     if matches!(image_input, ImageInput::Rgb(_)) && args.reference.is_some() {
-        return Err(
-            "a raw-image fixture cannot be validated against the zero-input reference".into(),
-        );
+        return Err("a raw-image fixture cannot be validated against the zero-input reference".into());
     }
-    // BF16 and FP8 both use the exact-shape GEMM tactic store. Calibration is
-    // FP8-only, while the current INT8 path has no persisted tactic database.
-    if dtype != Dtype::Fp8 && args.calibration.is_some() {
-        return Err("--calibration only applies to --dtype fp8".into());
-    }
-    if dtype == Dtype::Int8 && args.tactics.is_some() {
-        return Err("--tactics only applies to --dtype bf16 or fp8".into());
+    // FP8 tuning knobs (--tactics / --calibration) only apply to fp8; bf16/int8 have
+    // no per-tensor activation scales or GEMM tactic DB.
+    if dtype != Dtype::Fp8 {
+        if args.tactics.is_some() {
+            return Err("--tactics only applies to --dtype fp8".into());
+        }
+        if args.calibration.is_some() {
+            return Err("--calibration only applies to --dtype fp8".into());
+        }
     }
 
     let config = if random {
@@ -900,19 +774,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let backend = Arc::new(CudaBackend::new(0)?);
 
-    // BF16/FP8 tactics are optional: kernels retain their fallback route when no
-    // tuning DB is installed. Supplying the production DB is required for a
-    // benchmark that claims production routing.
+    // FP8 tactics are optional: the kernel falls back to a default tactic when no
+    // tuning DB is installed. Install one when provided (real-checkpoint runs).
+    // Validated fp8-only in the early conflict pass above.
     if let Some(path) = args.tactics.as_ref() {
         let tuning = apxinf_cuda::tuning::TuningDb::from_json_file(Path::new(path))?;
         apxinf_cuda::kernels::gemm::install_tuning_db(backend.context(), &tuning)?;
     }
 
     if random {
-        eprintln!(
-            "building deterministic random π0.5 weights (seed {})...",
-            args.seed
-        );
+        eprintln!("building deterministic random π0.5 weights (seed {})...", args.seed);
     } else {
         eprintln!("loading π0.5 checkpoint...");
     }
@@ -925,11 +796,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bench = match dtype {
         Dtype::Bf16 => {
             eprintln!("converting and uploading native BF16 weights...");
-            let device_weights = Arc::new(StaticBf16Pi05Weights::from_host(
-                &host_weights,
-                &*backend,
-                config.language_dual_geglu_shape_possible(),
-            )?);
+            let device_weights = Arc::new(StaticBf16Pi05Weights::from_host(&host_weights, &*backend)?);
             Bench::Bf16(Pi05Bf16CudaRuntime::new(
                 backend.clone(),
                 config.clone(),
@@ -937,39 +804,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             )?)
         }
         Dtype::Fp8 => {
-            let scales =
-                match args.calibration.as_deref() {
-                    Some(spec) if spec.starts_with("uniform:") => {
-                        eprintln!(
-                            "warning: uniform activation scales are for smoke/latency tests only"
-                        );
-                        Arc::new(Pi05ActivationScales::uniform(
-                            &config,
-                            spec["uniform:".len()..].parse()?,
-                        )?)
-                    }
-                    Some(path) => {
-                        let calibration = StaticFp8Calibration::from_json_file(Path::new(path))?;
-                        Arc::new(Pi05ActivationScales::from_calibration(
-                            &config,
-                            &calibration,
-                        )?)
-                    }
-                    None if random => {
-                        eprintln!("warning: no --calibration; using uniform activation scale 1.0");
-                        Arc::new(Pi05ActivationScales::uniform(&config, 1.0)?)
-                    }
-                    None => return Err(
+            let scales = match args.calibration.as_deref() {
+                Some(spec) if spec.starts_with("uniform:") => {
+                    eprintln!("warning: uniform activation scales are for smoke/latency tests only");
+                    Arc::new(Pi05ActivationScales::uniform(
+                        &config,
+                        spec["uniform:".len()..].parse()?,
+                    )?)
+                }
+                Some(path) => {
+                    let calibration = StaticFp8Calibration::from_json_file(Path::new(path))?;
+                    Arc::new(Pi05ActivationScales::from_calibration(&config, &calibration)?)
+                }
+                None if random => {
+                    eprintln!("warning: no --calibration; using uniform activation scale 1.0");
+                    Arc::new(Pi05ActivationScales::uniform(&config, 1.0)?)
+                }
+                None => {
+                    return Err(
                         "--dtype fp8 requires --calibration <json|uniform:SCALE> for a checkpoint"
                             .into(),
-                    ),
-                };
+                    )
+                }
+            };
             eprintln!("quantizing and uploading static FP8 weights...");
-            let device_weights = Arc::new(StaticFp8Pi05Weights::from_host(
-                &host_weights,
-                &*backend,
-                config.language_dual_geglu_shape_possible(),
-            )?);
+            let device_weights = Arc::new(StaticFp8Pi05Weights::from_host(&host_weights, &*backend)?);
             Bench::Fp8(Pi05CudaRuntime::new(
                 backend.clone(),
                 config.clone(),
@@ -979,8 +838,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Dtype::Int8 => {
             eprintln!("quantizing and uploading per-channel INT8 weights...");
-            let device_weights =
-                Arc::new(StaticInt8Pi05Weights::from_host(&host_weights, &backend)?);
+            let device_weights = Arc::new(StaticInt8Pi05Weights::from_host(&host_weights, &backend)?);
             Bench::Int8(Pi05Int8CudaRuntime::new(
                 backend.clone(),
                 config.clone(),
@@ -996,23 +854,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let (raw_images, patches_host) = match image_input {
         ImageInput::Patches => (None, Tensor::zeros(vec![patch_rows, patch_width], io_dtype)),
         ImageInput::Rgb(layout) => {
-            let (images, patches) =
-                raw_image_fixture(&config, layout, io_dtype, args.images_u8.as_deref())?;
+            let (images, patches) = raw_image_fixture(&config, layout, io_dtype)?;
             (Some(images), patches)
         }
     };
     let patches = backend.to_device(&patches_host)?;
-    let noise_host = noise_fixture(args.noise_bf16_u16le.as_deref(), &config, io_dtype)?;
+    let noise_host = Tensor::zeros(vec![config.action_horizon, config.action_dim], io_dtype);
     let noise = backend.to_device(&noise_host)?;
-    let host_token_ids = token_fixture(args.token_ids_u32le.as_deref(), token_count)?;
-    let token_bytes = host_token_ids
-        .iter()
-        .flat_map(|token| token.to_le_bytes())
-        .collect::<Vec<_>>();
-    let token_ids = CudaBuffer::alloc_zeros(token_bytes.len(), backend.device_id())
-        .map_err(std::io::Error::other)?;
-    token_ids
-        .copy_from_host(&token_bytes)
+    let token_ids = CudaBuffer::alloc_zeros(token_count * 4, backend.device_id())
         .map_err(std::io::Error::other)?;
     let time_embeddings = match dtype {
         Dtype::Bf16 => upload_time_embeddings_bf16(&config, &*backend)?,
@@ -1020,10 +869,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Dtype::Int8 => upload_time_embeddings_int8(&config, &*backend)?,
     };
 
-    eprintln!(
-        "running eager {} integrity pass...",
-        dtype.precision_label()
-    );
+    eprintln!("running eager {} integrity pass...", dtype.precision_label());
     let eager_output = bench.infer(&patches, &token_ids, token_count, &noise, &time_embeddings)?;
     let eager = backend.to_cpu(&eager_output)?.to_f32_vec()?;
     drop(eager_output);
@@ -1055,14 +901,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             bench.capture_infer_rgb_u8(layout, &token_ids, token_count, &noise, &time_embeddings)?
         }
     };
+    let host_token_ids = vec![0u32; token_count];
     if let Some(images) = raw_images.as_ref() {
         graph.update_raw_image_inputs(images, &host_token_ids, &noise_host)?;
     }
     graph.replay_and_synchronize()?;
     let captured = backend.to_cpu(graph.output())?.to_f32_vec()?;
     let eager_graph = ErrorMetrics::measure(&captured, &eager)?;
-    let eager_graph_passed = eager_graph.cosine >= EAGER_GRAPH_MIN_COSINE
-        && eager_graph.max_abs <= thresholds.eager_graph_max_abs;
+    let eager_graph_passed =
+        eager_graph.cosine >= EAGER_GRAPH_MIN_COSINE && eager_graph.max_abs <= thresholds.eager_graph_max_abs;
 
     let reference_min_cosine = args.min_cosine.unwrap_or(thresholds.reference_min_cosine);
     let reference_metrics = args
@@ -1145,11 +992,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "input_update_plus_graph_latency_ms": update_plus_graph_latency,
             },
             "token_count": token_count,
-            "fixture_inputs": {
-                "images_u8": args.images_u8,
-                "token_ids_u32le": args.token_ids_u32le,
-                "noise_bf16_u16le": args.noise_bf16_u16le,
-            },
             "iterations": iterations,
             "profile_replay": profile_replay,
             "latency_ms": graph_latency,

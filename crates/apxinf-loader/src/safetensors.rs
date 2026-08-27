@@ -304,6 +304,10 @@ fn parse_dtype(s: &str) -> Option<DType> {
         "F16" => Some(DType::F16),
         "BF16" => Some(DType::BF16),
         "F8_E4M3" => Some(DType::F8E4M3),
+        "U8" => Some(DType::U8),
+        "I8" => Some(DType::I8),
+        "I32" => Some(DType::I32),
+        "I64" => Some(DType::I64),
         _ => None,
     }
 }
@@ -326,6 +330,10 @@ mod tests {
                 DType::F16 => "F16",
                 DType::BF16 => "BF16",
                 DType::F8E4M3 => "F8_E4M3",
+                DType::U8 => "U8",
+                DType::I8 => "I8",
+                DType::I32 => "I32",
+                DType::I64 => "I64",
             };
             let shape_json: Vec<String> = shape.iter().map(|d| d.to_string()).collect();
             let end = data_offset + data.len();

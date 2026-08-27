@@ -373,6 +373,7 @@ impl LlamaModel {
             kv_len,
             self.config.max_seq_len,
             start_pos as u32,
+            seq_len,
         )?;
         // Output projection
         let proj = cuda_kernels::gemm::matmul(ctx, &attn_out, &layer.wo)?;

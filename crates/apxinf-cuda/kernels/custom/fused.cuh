@@ -193,60 +193,6 @@ __global__ void ada_gate_residual_rms_norm_quant_f16_e4m3_kernel(
   }
 }
 
-// Exact [10, 1024] action specialization. The first pass keeps
-// the production 256-lane ownership and reduction tree bit-for-bit. Rounded
-// hidden values are additionally cached in shared memory, and the independent
-// normalize/quantize pass uses one aligned 8-byte group per thread.
-__global__ void ada_gate_residual_rms_norm_quant_f16_e4m3_packed8_kernel(
-    const half* projection, const half* residual, const half* gate_style,
-    const half* norm_style, half* hidden, __nv_fp8_e4m3* normalized,
-    float eps, float inverse_scale) {
-  constexpr int cols = 1024;
-  __shared__ float scratch[8];
-  __shared__ half cached[cols];
-  const int row = blockIdx.x;
-  float square_sum = 0.0f;
-  for (int col = threadIdx.x; col < cols; col += blockDim.x) {
-    const int64_t index = static_cast<int64_t>(row) * cols + col;
-    const float gate = __half2float(gate_style[2 * cols + col]);
-    const half rounded = __float2half(
-        __half2float(residual[index]) + __half2float(projection[index]) * gate);
-    hidden[index] = rounded;
-    cached[col] = rounded;
-    const float value = __half2float(rounded);
-    square_sum += value * value;
-  }
-  const float inverse_rms =
-      rsqrtf(block_sum(square_sum, scratch) / cols + eps);
-
-  union Half4 {
-    uint2 packed;
-    half values[4];
-  };
-  union Bytes4 {
-    uint32_t packed;
-    uint8_t values[4];
-  };
-  const int col = threadIdx.x * 4;
-  Half4 h;
-  Half4 scale;
-  Half4 shift;
-  h.packed = *reinterpret_cast<const uint2*>(cached + col);
-  scale.packed = *reinterpret_cast<const uint2*>(norm_style + col);
-  shift.packed = *reinterpret_cast<const uint2*>(norm_style + cols + col);
-  Bytes4 output;
-#pragma unroll
-  for (int i = 0; i < 4; ++i) {
-    float value = __half2float(h.values[i]) * inverse_rms;
-    value = value * (1.0f + __half2float(scale.values[i])) +
-            __half2float(shift.values[i]);
-    value = fminf(448.0f, fmaxf(-448.0f, value * inverse_scale));
-    const __nv_fp8_e4m3 quantized = static_cast<__nv_fp8_e4m3>(value);
-    output.values[i] = *reinterpret_cast<const uint8_t*>(&quantized);
-  }
-  *reinterpret_cast<uint32_t*>(normalized + row * cols + col) = output.packed;
-}
-
 
 __global__ void bias_residual_f16_kernel(
     const half* projection, const half* bias, const half* residual,
@@ -542,5 +488,6 @@ __global__ void qkv_split_bias_bf16_kernel(
     }
   }
 }
+
 
 

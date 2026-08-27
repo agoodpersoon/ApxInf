@@ -318,7 +318,8 @@ impl GeneralQwen3VL {
         let x = self.backend.rms_norm(&x, &self.weights.output_norm_weight,
                                       self.config.text.rms_norm_eps)?;
         let logits = self.backend.matmul(&x, &self.lm_head)?;
-        Ok(logits)
+        self.backend.synchronize()?;
+        self.backend.to_cpu(&logits)
     }
 
     /// Text-only mRoPE position IDs. For a token at index `t` (absolute
@@ -483,11 +484,8 @@ impl LlmTrait for GeneralQwen3VL {
                                       self.config.text.rms_norm_eps)?;
         let logits = self.backend.matmul(&x, &self.lm_head)?;
 
-        Ok(logits)
-    }
-
-    fn backend(&self) -> &dyn Backend {
-        &*self.backend
+        self.backend.synchronize()?;
+        self.backend.to_cpu(&logits)
     }
 
     fn capabilities(&self) -> LlmCapabilities {

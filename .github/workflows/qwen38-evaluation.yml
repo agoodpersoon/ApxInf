@@ -1,0 +1,21 @@
+name: Qwen3.8 evaluation contract
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  assignment-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Run the unified assignment check
+        run: python3 benchmarks/qwen38_4090/evaluation/test.py check

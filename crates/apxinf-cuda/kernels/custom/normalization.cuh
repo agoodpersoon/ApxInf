@@ -192,7 +192,7 @@ __global__ void ada_rms_norm_quant_f16_e4m3_kernel(
 
 __global__ void rms_norm_bf16_kernel(
     const __nv_bfloat16* input, const __nv_bfloat16* weight,
-    __nv_bfloat16* output, int rows, int cols, float eps) {
+    __nv_bfloat16* output, int rows, int cols, float eps, bool one_plus) {
   __shared__ float scratch[8];
   const int row = blockIdx.x;
   float square_sum = 0.0f;
@@ -204,7 +204,7 @@ __global__ void rms_norm_bf16_kernel(
   for (int col = threadIdx.x; col < cols; col += blockDim.x) {
     const int64_t index = static_cast<int64_t>(row) * cols + col;
     output[index] = __float2bfloat16(
-        __bfloat162float(input[index]) * inverse_rms * __bfloat162float(weight[col]));
+        __bfloat162float(input[index]) * inverse_rms * (__bfloat162float(weight[col]) + (one_plus ? 1.0f : 0.0f)));
   }
 }
 

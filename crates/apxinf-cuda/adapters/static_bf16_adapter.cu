@@ -155,7 +155,17 @@ extern "C" cudaError_t apxinf_static_rms_norm_bf16(
   rms_norm_bf16_kernel<<<rows, kThreads, 0, stream>>>(
       static_cast<const __nv_bfloat16*>(input),
       static_cast<const __nv_bfloat16*>(weight),
-      static_cast<__nv_bfloat16*>(output), rows, cols, eps);
+      static_cast<__nv_bfloat16*>(output), rows, cols, eps, false);
+  return cudaGetLastError();
+}
+
+extern "C" cudaError_t apxinf_static_rms_norm_bf16_one_plus(
+    const void* input, const void* weight, void* output,
+    int rows, int cols, float eps, cudaStream_t stream) {
+  rms_norm_bf16_kernel<<<rows, kThreads, 0, stream>>>(
+      static_cast<const __nv_bfloat16*>(input),
+      static_cast<const __nv_bfloat16*>(weight),
+      static_cast<__nv_bfloat16*>(output), rows, cols, eps, true);
   return cudaGetLastError();
 }
 

@@ -388,3 +388,34 @@ pub fn euler_update_f16(
         output,
     ))
 }
+
+/// Copy a contiguous range of rows from a BF16 matrix without a full-size
+/// intermediate. Used by chunked long-context decoder prefill.
+pub fn slice_rows_bf16(
+    ctx: &CudaContext,
+    input: &Tensor,
+    start_row: usize,
+    rows: usize,
+) -> Result<Tensor> {
+    let (total_rows, cols) = matrix_shape(input, "row slice")?;
+    if input.dtype() != DType::BF16 || rows == 0 || start_row.checked_add(rows).is_none_or(|end| end > total_rows) {
+        return Err(Error::Other("BF16 row slice has invalid shape or range".into()));
+    }
+    let bytes_per_row = cols * DType::BF16.size_in_bytes();
+    let src = CudaBuffer::from_tensor(input)
+        .map_err(Error::Cuda)?
+        .view(start_row * bytes_per_row, rows * bytes_per_row)
+        .map_err(Error::Cuda)?;
+    let output = bf16_output(ctx, rows, cols)?;
+    unsafe {
+        ffi::check_cuda(ffi::cudaMemcpyAsync(
+            output.ptr(),
+            src.ptr(),
+            rows * bytes_per_row,
+            ffi::cudaMemcpyKind::cudaMemcpyDeviceToDevice,
+            ctx.stream().handle(),
+        ))
+        .map_err(Error::Cuda)?;
+    }
+    Ok(matrix_tensor(ctx, rows, cols, output))
+}

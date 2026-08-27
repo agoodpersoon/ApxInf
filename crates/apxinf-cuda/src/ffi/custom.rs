@@ -12,56 +12,6 @@ extern "C" {
         stream: cudaStream_t,
     ) -> cudaError_t;
 
-    pub fn apxinf_token_sampling_workspace_sizes(
-        vocab_size: u32,
-        sort_bytes: *mut usize,
-        scan_bytes: *mut usize,
-    ) -> cudaError_t;
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn apxinf_sample_token(
-        logits: *const c_void,
-        dtype: i32,
-        vocab_size: u32,
-        counts: *mut u32,
-        repetition: f32,
-        frequency: f32,
-        presence: f32,
-        selection: i32,
-        temperature: f32,
-        top_k: u32,
-        top_p: f32,
-        seed: u64,
-        sequence: u64,
-        draw: u64,
-        return_logprob: u32,
-        adjusted: *mut f32,
-        token_ids: *mut u32,
-        sorted_logits: *mut f32,
-        sorted_tokens: *mut u32,
-        weights: *mut f32,
-        cdf: *mut f32,
-        partial_values: *mut f32,
-        partial_tokens: *mut u32,
-        partial_count: u32,
-        sort_workspace: *mut c_void,
-        sort_workspace_bytes: usize,
-        scan_workspace: *mut c_void,
-        scan_workspace_bytes: usize,
-        output: *mut c_void,
-        stream: cudaStream_t,
-    ) -> cudaError_t;
-
-    pub fn apxinf_fill_standard_normal(
-        output: *mut c_void,
-        dtype: i32,
-        count: u64,
-        seed: u64,
-        sequence: u64,
-        draw: u64,
-        stream: cudaStream_t,
-    ) -> cudaError_t;
-
     pub fn apxinf_static_quantize_rows_bf16_int8(
         input: *const c_void,
         output: *mut c_void,
@@ -78,6 +28,28 @@ extern "C" {
         output: *mut c_void,
         rows: i32,
         cols: i32,
+        stream: cudaStream_t,
+    ) -> cudaError_t;
+
+    pub fn apxinf_static_w4a16_dequant_bf16(
+        packed: *const c_void,
+        scale: *const c_void,
+        zero_point: *const c_void,
+        output: *mut c_void,
+        n: i32,
+        k: i32,
+        stream: cudaStream_t,
+    ) -> cudaError_t;
+
+    pub fn apxinf_static_w4a16_gemm_bf16(
+        activation: *const c_void,
+        packed: *const c_void,
+        scale: *const c_void,
+        zero_point: *const c_void,
+        output: *mut c_void,
+        m: i32,
+        n: i32,
+        k: i32,
         stream: cudaStream_t,
     ) -> cudaError_t;
 
@@ -392,6 +364,15 @@ extern "C" {
         stream: cudaStream_t,
     ) -> cudaError_t;
     pub fn apxinf_static_rms_norm_bf16(
+        input: *const c_void,
+        weight: *const c_void,
+        output: *mut c_void,
+        rows: i32,
+        cols: i32,
+        eps: f32,
+        stream: cudaStream_t,
+    ) -> cudaError_t;
+    pub fn apxinf_static_rms_norm_bf16_one_plus(
         input: *const c_void,
         weight: *const c_void,
         output: *mut c_void,
@@ -929,6 +910,74 @@ extern "C" {
         n_heads: u32,
         head_dim: u32,
         scale: f32,
+        stream: cudaStream_t,
+    ) -> cudaError_t;
+
+    pub fn apxinf_static_delta_net_conv1d(
+        x: *const c_void,
+        weight: *const c_void,
+        conv_state: *mut c_void,
+        y: *mut c_void,
+        seq: i32,
+        channels: i32,
+        kernel: i32,
+        stream: cudaStream_t,
+    ) -> cudaError_t;
+
+    pub fn apxinf_static_delta_net_split_qkv(
+        fused: *const c_void,
+        q: *mut c_void,
+        k: *mut c_void,
+        v: *mut c_void,
+        seq: i32,
+        qd: i32,
+        kd: i32,
+        vd: i32,
+        stream: cudaStream_t,
+    ) -> cudaError_t;
+
+    pub fn apxinf_static_delta_net_prepare(
+        q: *const c_void,
+        k: *const c_void,
+        a: *const c_void,
+        b: *const c_void,
+        a_log: *const c_void,
+        dt_bias: *const c_void,
+        beta: *mut c_void,
+        g: *mut c_void,
+        q_r: *mut c_void,
+        k_r: *mut c_void,
+        seq: i32,
+        n_heads: i32,
+        v_heads: i32,
+        head_dim: i32,
+        scale: f32,
+        stream: cudaStream_t,
+    ) -> cudaError_t;
+
+    pub fn apxinf_static_delta_net_step(
+        q_r: *const c_void,
+        k_r: *const c_void,
+        v: *const c_void,
+        beta: *const c_void,
+        g: *const c_void,
+        ssm_state: *mut c_void,
+        out: *mut c_void,
+        seq: i32,
+        v_heads: i32,
+        head_dim: i32,
+        stream: cudaStream_t,
+    ) -> cudaError_t;
+
+    pub fn apxinf_static_delta_net_norm_gate(
+        out: *const c_void,
+        z: *const c_void,
+        norm_w: *const c_void,
+        output: *mut c_void,
+        seq: i32,
+        v_heads: i32,
+        head_dim: i32,
+        eps: f32,
         stream: cudaStream_t,
     ) -> cudaError_t;
 }

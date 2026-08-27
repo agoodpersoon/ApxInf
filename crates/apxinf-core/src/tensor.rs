@@ -178,6 +178,13 @@ impl Tensor {
         Ok(self.storage.as_cpu().unwrap())
     }
 
+    /// View the raw underlying bytes regardless of dtype. Used for packed
+    /// quantized weights (U8/I8/I32/I64 carriers) before reinterpretation.
+    pub fn as_raw_bytes(&self) -> Result<&[u8]> {
+        self.ensure_cpu()?;
+        Ok(self.storage.as_cpu().unwrap())
+    }
+
     /// Convert data to f32 regardless of stored dtype (copies if bf16).
     pub fn to_f32_vec(&self) -> Result<Vec<f32>> {
         self.ensure_cpu()?;
@@ -186,6 +193,9 @@ impl Tensor {
             DType::F16 => Ok(self.as_f16()?.iter().map(|x| x.to_f32()).collect()),
             DType::BF16 => Ok(self.as_bf16()?.iter().map(|x| x.to_f32()).collect()),
             DType::F8E4M3 => Err(Error::Other("raw E4M3 conversion requires an explicit quantization scale".into())),
+            DType::U8 | DType::I8 | DType::I32 | DType::I64 => Err(Error::Other(
+                "integer carrier dtype has no f32 conversion".into(),
+            )),
         }
     }
 

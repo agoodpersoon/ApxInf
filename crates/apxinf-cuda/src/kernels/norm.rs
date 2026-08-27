@@ -220,6 +220,38 @@ pub fn rms_bf16(ctx: &CudaContext, input: &Tensor, weight: &Tensor, eps: f32) ->
     Ok(matrix_tensor(ctx, rows, cols, output))
 }
 
+/// Qwen3.5 RMSNorm: the checkpoint stores the delta from the unit scale.
+pub fn rms_one_plus_bf16(
+    ctx: &CudaContext,
+    input: &Tensor,
+    weight: &Tensor,
+    eps: f32,
+) -> Result<Tensor> {
+    let (rows, cols) = matrix_shape(input, "Qwen3.5 RMSNorm")?;
+    if input.dtype() != DType::BF16
+        || weight.dtype() != DType::BF16
+        || weight.shape().dims() != [cols]
+    {
+        return Err(Error::Other(
+            "Qwen3.5 RMSNorm shape/dtype mismatch".into(),
+        ));
+    }
+    let output = bf16_output(ctx, rows, cols)?;
+    unsafe {
+        ffi::check_cuda(ffi::apxinf_static_rms_norm_bf16_one_plus(
+            gpu_ptr(input)?,
+            gpu_ptr(weight)?,
+            output.ptr(),
+            rows as i32,
+            cols as i32,
+            eps,
+            ctx.stream().handle(),
+        ))
+        .map_err(Error::Cuda)?;
+    }
+    Ok(matrix_tensor(ctx, rows, cols, output))
+}
+
 pub fn layer_bf16(
     ctx: &CudaContext,
     input: &Tensor,

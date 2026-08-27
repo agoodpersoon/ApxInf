@@ -3,9 +3,9 @@
 use std::sync::Arc;
 
 use super::backend::{kernels, transfers, Context, DeviceBuffer as CudaBuffer, RuntimeBackend};
-use apxinf_core::{Backend, DType, Error, Graph, Result, Tensor};
 use half::bf16;
 use kernels::{activation, cache, elementwise, embedding, norm, preprocess};
+use apxinf_core::{Backend, DType, Error, Graph, Result, Tensor};
 
 use super::{
     action_layer_int8, language_layer_int8, sinusoidal_time_embedding, vision_layer_int8,
@@ -58,7 +58,8 @@ impl Pi05Int8CapturedGraph {
         self.raw_image_layout
     }
 
-    fn update_tokens(&self, token_ids: &[u32]) -> Result<()> {
+    fn update_noise_and_tokens(&self, token_ids: &[u32], noise: &Tensor) -> Result<()> {
+        transfers::copy_cpu_to_cuda(noise, &self.noise)?;
         let bytes = token_ids
             .iter()
             .flat_map(|value| value.to_ne_bytes())
@@ -67,11 +68,6 @@ impl Pi05Int8CapturedGraph {
     }
 
     pub fn update_inputs(&self, patches: &Tensor, token_ids: &[u32], noise: &Tensor) -> Result<()> {
-        self.update_inputs_without_noise(patches, token_ids)?;
-        transfers::copy_cpu_to_cuda(noise, &self.noise)
-    }
-
-    pub fn update_inputs_without_noise(&self, patches: &Tensor, token_ids: &[u32]) -> Result<()> {
         if self.raw_images.is_some() {
             return Err(Error::Other(
                 "π0.5 INT8 graph uses raw RGB input; call update_raw_image_inputs".into(),
@@ -86,7 +82,7 @@ impl Pi05Int8CapturedGraph {
         }
         self.backend.synchronize()?;
         transfers::copy_cpu_to_cuda(patches, &self.patches)?;
-        self.update_tokens(token_ids)
+        self.update_noise_and_tokens(token_ids, noise)
     }
 
     pub fn update_raw_image_inputs(
@@ -94,15 +90,6 @@ impl Pi05Int8CapturedGraph {
         images: &[u8],
         token_ids: &[u32],
         noise: &Tensor,
-    ) -> Result<()> {
-        self.update_raw_image_inputs_without_noise(images, token_ids)?;
-        transfers::copy_cpu_to_cuda(noise, &self.noise)
-    }
-
-    pub fn update_raw_image_inputs_without_noise(
-        &self,
-        images: &[u8],
-        token_ids: &[u32],
     ) -> Result<()> {
         let raw_images = self.raw_images.as_ref().ok_or_else(|| {
             Error::Other("π0.5 INT8 graph uses patch input; call update_inputs".into())
@@ -123,7 +110,7 @@ impl Pi05Int8CapturedGraph {
         }
         self.backend.synchronize()?;
         raw_images.copy_from_host(images).map_err(Error::Cuda)?;
-        self.update_tokens(token_ids)
+        self.update_noise_and_tokens(token_ids, noise)
     }
 
     pub fn workspace_bytes(&self) -> usize {
@@ -269,11 +256,7 @@ impl Pi05Int8CudaRuntime {
 
     fn conditioning(&self, time_embedding: &Tensor) -> Result<Tensor> {
         let hidden = self.weights.time_mlp_in.gemm(self.ctx(), time_embedding)?;
-        let hidden = activation::bias_silu_bf16(
-            self.ctx(),
-            &hidden,
-            self.weights.time_mlp_in.bias.as_ref(),
-        )?;
+        let hidden = activation::bias_silu_bf16(self.ctx(), &hidden, self.weights.time_mlp_in.bias.as_ref())?;
         let output = self.weights.time_mlp_out.gemm(self.ctx(), &hidden)?;
         activation::bias_silu_bf16(self.ctx(), &output, self.weights.time_mlp_out.bias.as_ref())
     }
@@ -329,8 +312,7 @@ impl Pi05Int8CudaRuntime {
             return Err(Error::Other("π0.5 INT8 prefix/style depth mismatch".into()));
         }
         let hidden = self.weights.action_in.gemm(self.ctx(), state)?;
-        let mut hidden =
-            elementwise::bias_bf16(self.ctx(), &hidden, self.weights.action_in.bias.as_ref())?;
+        let mut hidden = elementwise::bias_bf16(self.ctx(), &hidden, self.weights.action_in.bias.as_ref())?;
         let mut attention_normalized = None;
         for index in 0..self.config.action_expert.depth {
             let layer = &self.weights.action_layers[index];
@@ -361,8 +343,7 @@ impl Pi05Int8CudaRuntime {
             Error::Other("π0.5 action expert must contain at least one layer".into())
         })?;
         let velocity = self.weights.action_out.gemm(self.ctx(), &hidden)?;
-        let velocity =
-            elementwise::bias_bf16(self.ctx(), &velocity, self.weights.action_out.bias.as_ref())?;
+        let velocity = elementwise::bias_bf16(self.ctx(), &velocity, self.weights.action_out.bias.as_ref())?;
         elementwise::euler_update_bf16(self.ctx(), state, &velocity, dt)
     }
 

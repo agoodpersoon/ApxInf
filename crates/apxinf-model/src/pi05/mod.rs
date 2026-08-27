@@ -13,10 +13,10 @@ mod bf16_executor;
 mod bf16_runtime;
 mod bf16_weights;
 mod config;
+#[cfg(feature = "cuda")]
+mod cuda_executor;
 mod device_weights;
 mod fp8;
-#[cfg(feature = "cuda")]
-mod fp8_executor;
 #[cfg(feature = "cuda")]
 mod int8_executor;
 #[cfg(feature = "cuda")]
@@ -46,16 +46,16 @@ pub use bf16_runtime::{
 };
 pub use bf16_weights::{bf16_to_device, Bf16LinearWeights};
 pub use config::{GemmaVariantConfig, Pi05Config, Pi05PerformanceProfile};
+#[cfg(feature = "cuda")]
+pub use cuda_executor::{
+    action_layer, language_layer, vision_layer, vision_patch_embed, vision_patch_embed_fp8,
+    vision_qkv_packed_from_env, ActionLayerOutput, LanguageLayerOutput, TransformerLayerScales,
+    VisionLayerScales,
+};
 pub use device_weights::{fp16_to_device, Fp8LinearWeights};
 pub use fp8::{
     decode_e4m3, dequantize_e4m3, encode_e4m3, quantize_e4m3, quantize_e4m3_absmax, Fp8Tensor,
     StaticFp8Calibration, E4M3_MAX,
-};
-#[cfg(feature = "cuda")]
-pub use fp8_executor::{
-    action_layer, language_layer, vision_layer, vision_patch_embed, vision_patch_embed_fp8,
-    vision_qkv_packed_from_env, ActionLayerOutput, LanguageLayerOutput, TransformerLayerScales,
-    VisionLayerScales,
 };
 #[cfg(feature = "cuda")]
 pub use int8_executor::{
@@ -68,7 +68,9 @@ pub use int8_runtime::{
 };
 #[cfg(feature = "cuda")]
 pub use int8_weights::Int8LinearWeights;
-pub use math::{discretize_state, euler_flow_step, pi05_prompt, sinusoidal_time_embedding};
+pub use math::{
+    discretize_state, euler_flow_step, pi05_prompt, sinusoidal_time_embedding,
+};
 #[cfg(feature = "cuda")]
 pub use runtime::{
     upload_time_embeddings, Pi05ActivationScales, Pi05CapturedGraph, Pi05CudaRuntime,

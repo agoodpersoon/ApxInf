@@ -62,11 +62,7 @@ pub struct StaticFp8Pi05Weights {
 }
 
 impl StaticFp8Pi05Weights {
-    pub fn from_host(
-        weights: &Pi05Weights,
-        backend: &dyn Backend,
-        language_dual_layout: bool,
-    ) -> Result<Self> {
+    pub fn from_host(weights: &Pi05Weights, backend: &dyn Backend) -> Result<Self> {
         let vision_layers = weights
             .vision
             .blocks
@@ -76,7 +72,7 @@ impl StaticFp8Pi05Weights {
         let language_layers = weights
             .language_layers
             .iter()
-            .map(|layer| DeviceLanguageLayer::from_host(layer, backend, language_dual_layout))
+            .map(|layer| DeviceLanguageLayer::from_host(layer, backend))
             .collect::<Result<Vec<_>>>()?;
         let action_layers = weights
             .action_layers
@@ -128,11 +124,7 @@ impl DeviceVisionBlock {
 }
 
 impl DeviceLanguageLayer {
-    fn from_host(
-        weights: &LanguageLayerWeights,
-        backend: &dyn Backend,
-        allow_dual_layout: bool,
-    ) -> Result<Self> {
+    fn from_host(weights: &LanguageLayerWeights, backend: &dyn Backend) -> Result<Self> {
         Ok(Self {
             input_norm_scale: fp16_to_device(&weights.input_norm_scale, backend)?,
             qkv: Fp8LinearWeights::from_host_parts(
@@ -145,10 +137,9 @@ impl DeviceLanguageLayer {
             )?,
             output: Fp8LinearWeights::from_host(&weights.attention.output, backend)?,
             post_attention_norm_scale: fp16_to_device(&weights.post_attention_norm_scale, backend)?,
-            gate_up: Fp8LinearWeights::from_host_parts_with_dual_layout(
+            gate_up: Fp8LinearWeights::from_host_parts(
                 &[&weights.mlp.gate, &weights.mlp.up],
                 backend,
-                allow_dual_layout,
             )?,
             down: Fp8LinearWeights::from_host(&weights.mlp.down, backend)?,
         })

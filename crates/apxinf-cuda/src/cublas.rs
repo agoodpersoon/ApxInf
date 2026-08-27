@@ -129,6 +129,9 @@ impl CublasHandle {
                 }
             }
             DType::F8E4M3 => Err("use kernels::gemm::fp8 for FP8 operands".into()),
+            DType::U8 | DType::I8 | DType::I32 | DType::I64 => {
+                Err("integer carrier dtype has no cublas gemm".into())
+            }
         }
     }
 
@@ -223,6 +226,67 @@ impl CublasHandle {
                 }
             }
             DType::F8E4M3 => Err("use kernels::gemm::fp8 for FP8 operands".into()),
+            DType::U8 | DType::I8 | DType::I32 | DType::I64 => {
+                Err("integer carrier dtype has no cublas gemm".into())
+            }
+        }
+    }
+
+
+    /// Strided batched row-major GEMM with a transposed right operand.
+    /// Computes C = A @ B^T for A [M,K], B [N,K].
+    pub fn batched_gemm_transpose_b(
+        &self,
+        dtype: DType,
+        m: usize,
+        n: usize,
+        k: usize,
+        alpha: f32,
+        a: &CudaBuffer,
+        stride_a: i64,
+        b: &CudaBuffer,
+        stride_b: i64,
+        beta: f32,
+        c: &CudaBuffer,
+        stride_c: i64,
+        batch_count: i32,
+    ) -> Result<(), String> {
+        let cuda_type = match dtype {
+            DType::F16 => ffi::cudaDataType_t::CUDA_R_16F,
+            DType::BF16 => ffi::cudaDataType_t::CUDA_R_16BF,
+            _ => return Err("batched_gemm_transpose_b supports F16/BF16 only".into()),
+        };
+        let m_i = m as i32;
+        let n_i = n as i32;
+        let k_i = k as i32;
+        let alpha_bytes = alpha.to_ne_bytes();
+        let beta_bytes = beta.to_ne_bytes();
+        unsafe {
+            ffi::check_cublas(ffi::cublasGemmStridedBatchedEx(
+                self.handle,
+                ffi::cublasOperation_t::CUBLAS_OP_T,
+                ffi::cublasOperation_t::CUBLAS_OP_N,
+                n_i,
+                m_i,
+                k_i,
+                alpha_bytes.as_ptr() as *const c_void,
+                b.ptr(),
+                cuda_type,
+                k_i,
+                stride_b,
+                a.ptr(),
+                cuda_type,
+                k_i,
+                stride_a,
+                beta_bytes.as_ptr() as *const c_void,
+                c.ptr() as *mut c_void,
+                cuda_type,
+                n_i,
+                stride_c,
+                batch_count,
+                ffi::cublasComputeType_t::CUBLAS_COMPUTE_32F,
+                -1,
+            ))
         }
     }
 
@@ -329,6 +393,9 @@ impl CublasHandle {
                 }
             }
             DType::F8E4M3 => Err("use kernels::gemm::fp8 for FP8 operands".into()),
+            DType::U8 | DType::I8 | DType::I32 | DType::I64 => {
+                Err("integer carrier dtype has no cublas gemm".into())
+            }
         }
     }
 

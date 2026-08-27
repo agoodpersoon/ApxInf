@@ -155,10 +155,6 @@ struct Flash_fwd_params : public Qkv_params {
 
     bool unpadded_lse;  // For varlen paths: LSE is in [nheads, total_seqlen_q] format instead of [b, nheads, seqlen_q].
     bool seqlenq_ngroups_swapped;  // q has been transposed from (b, 1, (nheads_kv ngroups), d) to (b, ngroups, nheads_kv, d).
-
-    // Direct-E4M3 epilogue scale. Appended to preserve all existing field
-    // offsets in the default FA2 namespace.
-    float output_inverse_scale;
 };
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////

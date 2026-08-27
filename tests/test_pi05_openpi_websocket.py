@@ -46,14 +46,10 @@ class MockModel:
         self.max_token_len = 200
         self.images: list[np.ndarray] = []
         self.noises: list[np.ndarray] = []
-        self.sampling_draw = 0
 
-    def infer_rgb(self, rgb_u8, layout, token_ids, noise=None):
+    def infer_rgb(self, rgb_u8, layout, token_ids, noise):
         assert layout == "nhwc"
         self.images.append(np.asarray(rgb_u8).copy())
-        if noise is None:
-            noise = np.full((HORIZON, MODEL_DIM), self.sampling_draw, dtype=np.float32)
-            self.sampling_draw += 1
         self.noises.append(np.asarray(noise).copy())
         return np.zeros((HORIZON, MODEL_DIM), dtype=np.float32)
 
@@ -179,7 +175,7 @@ class WebsocketServerCompatibilityTest(unittest.TestCase):
         self.assertNotIn("prev_total_ms", first["server_timing"])
         self.assertIn("prev_total_ms", second["server_timing"])
 
-        # The in-process model saw two NHWC calls, one row per configured camera.
+        # The in-process model saw two NHWC calls, stacked + padded to num_views.
         self.assertEqual(len(self.policy.model.images), 2)
         self.assertEqual(self.policy.model.images[0].shape, (NUM_VIEWS, 224, 224, 3))
         self.assertEqual(self.policy.model.images[0].dtype, np.dtype("uint8"))

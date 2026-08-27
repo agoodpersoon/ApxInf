@@ -49,11 +49,7 @@ class BareModel(Protocol):
     image_size: int
 
     def infer_rgb(
-        self,
-        rgb_u8: np.ndarray,
-        layout: str,
-        token_ids: np.ndarray,
-        noise: np.ndarray | None = None,
+        self, rgb_u8: np.ndarray, layout: str, token_ids: np.ndarray, noise: np.ndarray
     ) -> np.ndarray: ...
 
 
@@ -74,14 +70,8 @@ class Policy(Protocol):
         """Number of actions in one predicted chunk."""
         ...
 
-    def infer(
-        self, observation: Mapping[str, Any], *, noise: np.ndarray | None = None
-    ) -> Dict[str, Any]:
+    def infer(self, observation: Mapping[str, Any]) -> Dict[str, Any]:
         """Map a raw observation dict (+ prompt) to a result dict.
-
-        ``noise`` optionally supplies an exact continuous initial latent. A
-        policy whose model samples such a latent internally uses that path when
-        the argument is absent.
 
         Guarantees the ``actions`` and ``timing`` keys (see module docstring).
         """

@@ -8,9 +8,7 @@ use crate::device_caps::CudaDeviceCaps;
 use super::key::{
     DeviceFingerprint, Epilogue, GemmLayout, GemmOp, GemmTuningKey, ScaleMode, TuningDType,
 };
-use super::store::{
-    decode_cublaslt_custom_tactic, GemmTuningRecord, TacticBackend, TacticId, TacticStore,
-};
+use super::store::{GemmTuningRecord, TacticBackend, TacticId, TacticStore};
 
 pub const TUNING_SCHEMA_V1: &str = "apxinf.cuda.tuning.v1";
 
@@ -191,6 +189,7 @@ impl TuningDb {
 
 fn validate_v1_header(header: &TuningDbHeader) -> Result<()> {
     let missing = [
+        ("kernel_build_id", header.kernel_build_id.as_deref()),
         ("device_name", header.device_name.as_deref()),
         ("cuda_version", header.cuda_version.as_deref()),
         ("cublas_version", header.cublas_version.as_deref()),
@@ -410,29 +409,6 @@ fn parse_backend(value: &str, label: &str) -> Result<TacticBackend> {
     match value {
         "cutlass" => Ok(TacticBackend::Cutlass),
         "cublaslt" => Ok(TacticBackend::CublasLt),
-        "cublaslt_custom" => Ok(TacticBackend::CublasLtCustom),
-        "cublaslt_custom_bias" => Ok(TacticBackend::CublasLtCustomBias),
-        "cublaslt_custom_split_serial" => Ok(TacticBackend::CublasLtCustomSplitSerial),
-        "cublaslt_custom_split_geglu_cutlass" => Ok(TacticBackend::CublasLtCustomSplitGeGluCutlass),
-        "cublaslt_custom_split_geglu_cutlass_2sm_auto" => {
-            Ok(TacticBackend::CublasLtCustomSplitGeGluCutlass2SmAuto)
-        }
-        "cublaslt_custom_split_geglu_cutlass_2sm_stage3" => {
-            Ok(TacticBackend::CublasLtCustomSplitGeGluCutlass2SmStage3)
-        }
-        "cublaslt_custom_split_geglu_cutlass_m522_explicit_2sm" => {
-            Ok(TacticBackend::CublasLtCustomSplitGeGluCutlassM522Explicit2Sm)
-        }
-        // Historical names remain read-only compatibility aliases. New
-        // configs use the semantic backend name without encoding M in it.
-        "cutlass_fp8_dual_geglu"
-        | "cutlass_fp8_dual_geglu_m522"
-        | "cutlass_fp8_dual_geglu_m533" => Ok(TacticBackend::CutlassFp8DualGeGlu),
-        "cutlass_bf16_dual_geglu_m522" => Ok(TacticBackend::CutlassBf16DualGeGluM522),
-        "cutlass_bf16_dual_geglu_m533" => Ok(TacticBackend::CutlassBf16DualGeGluM533),
-        "cublaslt_custom_split_geglu_cutlass_bf16" => {
-            Ok(TacticBackend::CublasLtCustomSplitGeGluCutlassBf16)
-        }
         "vendor" => Ok(TacticBackend::Vendor),
         value => invalid_field(label, "backend", value),
     }
@@ -517,19 +493,6 @@ fn validate_tactic(key: &str, backend: TacticBackend, tactic: i32) -> Result<()>
     let valid = match backend {
         TacticBackend::Cutlass => (0..=7).contains(&tactic),
         TacticBackend::CublasLt => (0..64).contains(&tactic),
-        TacticBackend::CublasLtCustom
-        | TacticBackend::CublasLtCustomBias
-        | TacticBackend::CublasLtCustomSplitSerial
-        | TacticBackend::CublasLtCustomSplitGeGluCutlass
-        | TacticBackend::CublasLtCustomSplitGeGluCutlass2SmAuto
-        | TacticBackend::CublasLtCustomSplitGeGluCutlass2SmStage3
-        | TacticBackend::CublasLtCustomSplitGeGluCutlassM522Explicit2Sm
-        | TacticBackend::CublasLtCustomSplitGeGluCutlassBf16 => {
-            decode_cublaslt_custom_tactic(tactic).is_some()
-        }
-        TacticBackend::CutlassFp8DualGeGlu
-        | TacticBackend::CutlassBf16DualGeGluM522
-        | TacticBackend::CutlassBf16DualGeGluM533 => tactic == 0,
         TacticBackend::Vendor => tactic >= 0,
     };
     if valid {
@@ -606,20 +569,6 @@ mod tests {
     }
 
     #[test]
-    fn fp8_dual_geglu_backend_accepts_semantic_and_legacy_names() {
-        for name in [
-            "cutlass_fp8_dual_geglu",
-            "cutlass_fp8_dual_geglu_m522",
-            "cutlass_fp8_dual_geglu_m533",
-        ] {
-            assert_eq!(
-                parse_backend(name, "test backend").unwrap(),
-                TacticBackend::CutlassFp8DualGeGlu
-            );
-        }
-    }
-
-    #[test]
     fn parses_v1_full_physical_record() {
         let db = TuningDb::from_json_str(&format!(
             r#"{{
@@ -681,15 +630,6 @@ mod tests {
 
         let wrong_cublas = TuningDb::from_json_str(&database("12.6", "12.7")).unwrap();
         assert!(wrong_cublas.build_store(&caps(87), &versions()).is_err());
-    }
-
-    #[test]
-    fn accepts_v1_header_without_kernel_build_id() {
-        let db = TuningDb::from_json_str(
-            r#"{"schema":"apxinf.cuda.tuning.v1","device_name":"test","sm":87,"cuda_version":"12.6","cublas_version":"12.6.4","tactics":{}}"#,
-        )
-        .unwrap();
-        assert!(db.build_store(&caps(87), &versions()).is_ok());
     }
 
     #[test]

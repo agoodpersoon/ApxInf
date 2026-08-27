@@ -38,28 +38,20 @@ from typing import Any, MutableMapping
 import numpy as np
 
 from ..base import ProcessorStep
-from ..transforms import ACTIONS, OBSERVATION, lookup_key, set_key
+from ..transforms import ACTIONS, OBSERVATION
 
 __all__ = [
     "UnitreeG1DecodeState",
     "UnitreeG1AbsoluteActions",
     "UnitreeG1EncodeActions",
     "G1_CAMERAS",
-    "G1_STATE_KEY",
     "G1_ROBOT_DIM",
     "G1_DELTA_MASK",
 ]
 
-#: G1 camera **wire keys**, ordered base / left-wrist / right-wrist to match the
-#: model's view slots (openpi ``base_0_rgb`` / ``left_wrist_0_rgb`` /
-#: ``right_wrist_0_rgb``). These are the keys an unmodified openpi G1 client
-#: sends, i.e. the nested ``obs["images"]["cam_high"]`` layout, spelled as a path
-#: for :func:`~apxinf.processors.transforms.lookup_key`.
-G1_CAMERAS = ("images/cam_high", "images/cam_left_wrist", "images/cam_right_wrist")
-
-#: G1 state wire key. openpi's G1 client sends a flat top-level ``"state"``, not
-#: LIBERO's ``"observation/state"``.
-G1_STATE_KEY = "state"
+#: G1 camera keys, ordered base / left-wrist / right-wrist to match the model's
+#: view slots (openpi ``base_0_rgb`` / ``left_wrist_0_rgb`` / ``right_wrist_0_rgb``).
+G1_CAMERAS = ("cam_high", "cam_left_wrist", "cam_right_wrist")
 
 #: G1 state/action layout: [L-arm 7, L-gripper 1, R-arm 7, R-gripper 1].
 G1_ROBOT_DIM = 16
@@ -111,21 +103,20 @@ class UnitreeG1DecodeState(ProcessorStep):
     no-op when no state is present (state-off serving).
     """
 
-    def __init__(self, state_key: str = G1_STATE_KEY, *, observation_key: str = OBSERVATION):
+    def __init__(self, state_key: str, *, observation_key: str = OBSERVATION):
         self.state_key = state_key
         self.observation_key = observation_key
 
     def __call__(self, data: MutableMapping[str, Any]) -> MutableMapping[str, Any]:
         observation = data.get(self.observation_key)
-        if observation is None:
+        if observation is None or self.state_key not in observation:
             return data
-        raw = lookup_key(observation, self.state_key, None)
-        if raw is None:
-            return data
-        state = np.asarray(raw, dtype=np.float32) * _joint_flip_mask()
+        state = np.asarray(observation[self.state_key], dtype=np.float32) * _joint_flip_mask()
         idx = list(_GRIPPER_INDICES)
         state[idx] = _gripper_to_angular(state[idx])
-        data[self.observation_key] = set_key(observation, self.state_key, state)
+        decoded = dict(observation)
+        decoded[self.state_key] = state
+        data[self.observation_key] = decoded
         return data
 
 
@@ -138,13 +129,13 @@ class UnitreeG1AbsoluteActions(ProcessorStep):
     ``Pi05Policy.infer``. A no-op when state is absent (delta cannot be resolved).
     """
 
-    def __init__(self, state_key: str = G1_STATE_KEY, *, observation_key: str = OBSERVATION):
+    def __init__(self, state_key: str, *, observation_key: str = OBSERVATION):
         self.state_key = state_key
         self.observation_key = observation_key
 
     def __call__(self, data: MutableMapping[str, Any]) -> MutableMapping[str, Any]:
         observation = data.get(self.observation_key) or {}
-        state = lookup_key(observation, self.state_key, None)
+        state = observation.get(self.state_key)
         if state is None:
             return data
         actions = np.asarray(data[ACTIONS], dtype=np.float32).copy()

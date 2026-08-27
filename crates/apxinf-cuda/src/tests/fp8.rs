@@ -39,8 +39,6 @@ fn fp8_gemm_f16(
         crate::kernels::gemm::Fp8WeightView {
             values_e4m3: weight,
             scale: weight_scale,
-            dual_geglu_interleaved: false,
-            dual_geglu_auto_interleaved: None,
         },
     )
 }
@@ -48,9 +46,6 @@ fn fp8_gemm_f16(
 #[cfg(apxinf_fa2_f16_sm100)]
 #[test]
 fn fa2_language_mqa_f16_matches_cublas() {
-    // FA2 requests >=48 KiB dynamic shared memory; serialize against
-    // other such tests. See tests::gpu_smem_guard.
-    let _gpu = crate::tests::gpu_smem_guard();
     const TOKENS: usize = 778;
     const HEADS: usize = 8;
     const HEAD_DIM: usize = 256;
@@ -109,55 +104,6 @@ fn fa2_language_mqa_f16_matches_cublas() {
         cosine >= 0.999 && relative_l2 <= 0.02 && max_abs <= 0.05,
         "FA2 language MQA mismatch: cosine={cosine}, relative_l2={relative_l2}, max_abs={max_abs}"
     );
-}
-
-#[cfg(apxinf_fa2_direct_e4m3_sm100)]
-#[test]
-fn fa2_language_direct_e4m3_matches_packed4_bytes() {
-    // FA2 requests >=48 KiB dynamic shared memory; serialize against
-    // other such tests. See tests::gpu_smem_guard.
-    let _gpu = crate::tests::gpu_smem_guard();
-    const TOKENS: usize = 522;
-    const HEADS: usize = 8;
-    const HEAD_DIM: usize = 256;
-    const SCALE: f32 = 0.05901227678571429;
-    let backend = CudaBackend::new(0).unwrap();
-    let q_values = (0..TOKENS * HEADS * HEAD_DIM)
-        .map(|index| f16::from_f32(((index * 17 % 37) as f32 - 18.0) / 128.0))
-        .collect::<Vec<_>>();
-    let k_values = (0..TOKENS * HEAD_DIM)
-        .map(|index| f16::from_f32(((index * 17 + 7) % 37) as f32 / 128.0 - 0.140625))
-        .collect::<Vec<_>>();
-    let v_values = (0..TOKENS * HEAD_DIM)
-        .map(|index| f16::from_f32(((index * 17 + 11) % 37) as f32 / 64.0 - 0.28125))
-        .collect::<Vec<_>>();
-    let q = backend
-        .to_device(&Tensor::from_f16(vec![TOKENS, HEADS, HEAD_DIM], &q_values).unwrap())
-        .unwrap();
-    let k = backend
-        .to_device(&Tensor::from_f16(vec![TOKENS, 1, HEAD_DIM], &k_values).unwrap())
-        .unwrap();
-    let v = backend
-        .to_device(&Tensor::from_f16(vec![TOKENS, 1, HEAD_DIM], &v_values).unwrap())
-        .unwrap();
-    let workspace = GraphWorkspace::new(32 << 20, backend.device_id()).unwrap();
-    let (expected, actual) = prepare_with_workspace(&workspace, || {
-        let fp16 = fa2_mqa_f16(backend.context(), &q, &k, &v, TOKENS)?;
-        let expected = quantize_f16_e4m3(backend.context(), &fp16, SCALE)?;
-        let actual = mqa_f16_e4m3_522(backend.context(), &q, &k, &v, SCALE)?;
-        Ok((expected, actual))
-    })
-    .unwrap();
-    backend.synchronize().unwrap();
-    let expected = backend.to_cpu(&expected).unwrap();
-    let actual = backend.to_cpu(&actual).unwrap();
-    assert_eq!(actual.as_f8_e4m3().unwrap(), expected.as_f8_e4m3().unwrap());
-
-    let wrong_q = q.reshape(vec![TOKENS, 4, HEAD_DIM * 2]).unwrap();
-    assert!(mqa_f16_e4m3_522(backend.context(), &wrong_q, &k, &v, SCALE).is_err());
-    assert!(mqa_f16_e4m3_522(backend.context(), &q, &k, &v, 0.0).is_err());
-    assert!(mqa_f16_e4m3_522(backend.context(), &q, &k, &v, f32::NAN).is_err());
-    assert!(mqa_f16_e4m3_522(backend.context(), &q, &k, &v, f32::INFINITY).is_err());
 }
 
 #[cfg(apxinf_cutlass_fmha)]

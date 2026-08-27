@@ -2,6 +2,7 @@
   "cublas_version": "13.0",
   "cuda_version": "13.0",
   "device_name": "NVIDIA Thor",
+  "kernel_build_id": "kb1-72b398f332ec581e84b8489c4d336ddf",
   "records": [
     {
       "candidates": {
@@ -597,14 +598,11 @@
     },
     {
       "candidates": {
-        "cublaslt_best_ms": 0.8278977274894714,
+        "cublaslt_best_ms": 0.8548778295516968,
         "cublaslt_best_rank": 7,
-        "cold_l2_candidate_ms": 0.847696,
-        "cold_l2_control_ms": 0.867232,
-        "cublaslt_custom_find_ms": 0.653878,
-        "cublaslt_default_ms": 1.535004734992981,
+        "cublaslt_default_ms": 1.7307316064834595,
         "cublaslt_returned_algorithms": 8,
-        "vendor_ms": 1.4847786664962768
+        "vendor_ms": 1.6742826700210571
       },
       "key": {
         "activation_dtype": "bf16",
@@ -619,13 +617,13 @@
         "weight_dtype": "bf16",
         "workspace_limit": 18446744073709551615
       },
-      "milliseconds": 0.818528,
+      "milliseconds": 0.8548778295516968,
       "profiles": [
         "2v/t10/language.gate_up"
       ],
       "tactic": {
-        "backend": "cutlass_bf16_dual_geglu_m522",
-        "id": 0
+        "backend": "cublaslt",
+        "id": 7
       }
     },
     {
@@ -1278,13 +1276,11 @@
     },
     {
       "candidates": {
-        "cublaslt_best_ms": 1.0069695711135864,
-        "cublaslt_best_rank": 0,
-        "cublaslt_custom_find_control_ms": 0.83375,
-        "cublaslt_custom_find_ms": 0.811149,
-        "cublaslt_default_ms": 1.0069695711135864,
+        "cublaslt_best_ms": 1.0071284770965576,
+        "cublaslt_best_rank": 6,
+        "cublaslt_default_ms": 1.0141270160675049,
         "cublaslt_returned_algorithms": 8,
-        "vendor_ms": 1.0154367903868358
+        "vendor_ms": 1.0118655959765117
       },
       "key": {
         "activation_dtype": "bf16",
@@ -1299,13 +1295,13 @@
         "weight_dtype": "bf16",
         "workspace_limit": 18446744073709551615
       },
-      "milliseconds": 0.811149,
+      "milliseconds": 1.0071284770965576,
       "profiles": [
         "3v/t10/language.gate_up"
       ],
       "tactic": {
-        "backend": "cublaslt_custom",
-        "id": 18377904
+        "backend": "cublaslt",
+        "id": 6
       }
     },
     {
@@ -1400,11 +1396,11 @@
     },
     {
       "candidates": {
-        "cublaslt_best_ms": 0.954319953918457,
+        "cublaslt_best_ms": 0.9856223464012146,
         "cublaslt_best_rank": 6,
-        "cublaslt_default_ms": 0.9577428102493286,
+        "cublaslt_default_ms": 0.9941631555557251,
         "cublaslt_returned_algorithms": 8,
-        "vendor_ms": 0.939004800717036
+        "vendor_ms": 1.0001215934753418
       },
       "key": {
         "activation_dtype": "bf16",
@@ -1419,13 +1415,13 @@
         "weight_dtype": "bf16",
         "workspace_limit": 18446744073709551615
       },
-      "milliseconds": 1.04176,
+      "milliseconds": 0.9856223464012146,
       "profiles": [
         "3v/t21/language.gate_up"
       ],
       "tactic": {
-        "backend": "cublaslt_custom_split_serial",
-        "id": 18377904
+        "backend": "cublaslt",
+        "id": 6
       }
     },
     {

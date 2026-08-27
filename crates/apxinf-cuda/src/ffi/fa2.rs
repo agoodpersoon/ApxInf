@@ -22,23 +22,6 @@ extern "C" {
         stream: cudaStream_t,
     ) -> cudaError_t;
 
-    #[cfg(apxinf_fa2_direct_e4m3_sm100)]
-    pub fn apxinf_static_fa2_f16_direct_e4m3_522(
-        q: *const c_void,
-        k: *const c_void,
-        v: *const c_void,
-        output: *mut c_void,
-        softmax_lse: *mut c_void,
-        batches: i32,
-        query_tokens: i32,
-        key_tokens: i32,
-        query_heads: i32,
-        kv_heads: i32,
-        head_dim: i32,
-        output_scale: f32,
-        stream: cudaStream_t,
-    ) -> cudaError_t;
-
     #[cfg(apxinf_fa2_sm80)]
     pub fn apxinf_static_fa2_bf16(
         q: *const c_void,
@@ -56,23 +39,22 @@ extern "C" {
         stream: cudaStream_t,
     ) -> cudaError_t;
 
-    #[cfg(apxinf_fa2_sm80)]
-    pub fn apxinf_static_fa2_bf16_splitkv(
+
+
+    pub fn apxinf_static_fa2_bf16_causal_headfirst_kv(
         q: *const c_void,
         k: *const c_void,
         v: *const c_void,
         output: *mut c_void,
         softmax_lse: *mut c_void,
-        softmax_lse_accum: *mut c_void,
-        o_accum: *mut c_void,
         batches: i32,
         query_tokens: i32,
         key_tokens: i32,
         query_heads: i32,
         kv_heads: i32,
         head_dim: i32,
+        kv_capacity: i32,
         softmax_scale: f32,
-        num_sms: i32,
         stream: cudaStream_t,
     ) -> cudaError_t;
 }

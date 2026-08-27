@@ -266,6 +266,7 @@ impl Backend for CudaBackend {
             kv_len,
             max_seq_len,
             kv_offset,
+            q.shape().dims()[0],
         )
     }
 
@@ -293,6 +294,7 @@ impl Backend for CudaBackend {
             kv_len,
             max_seq_len,
             kv_offset as u32,
+            seq_len,
         )
     }
 

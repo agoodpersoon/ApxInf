@@ -182,15 +182,6 @@ impl Pi05Config {
         self.num_views * self.patches_per_view() + self.max_token_len
     }
 
-    /// Whether this model profile can ever produce one of the exact language
-    /// M shapes supported by the paired Gate/Up + GeGLU kernels.
-    pub fn language_dual_geglu_shape_possible(&self) -> bool {
-        let patch_tokens = self.num_views * self.patches_per_view();
-        [522usize, 533usize]
-            .into_iter()
-            .any(|m| m > patch_tokens && m - patch_tokens <= self.max_token_len)
-    }
-
     /// Device arena size for one allocation-free full inference capture.
     ///
     /// The current graph intentionally gives every intermediate a stable
@@ -573,12 +564,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(cfg.num_views, 3);
-    }
-
-    #[test]
-    fn language_dual_geglu_shapes_are_reachable_only_for_two_view_profile() {
-        assert!(Pi05Config::thor_two_view().language_dual_geglu_shape_possible());
-        assert!(!Pi05Config::default().language_dual_geglu_shape_possible());
     }
 
     #[test]

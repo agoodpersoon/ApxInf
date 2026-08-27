@@ -31,7 +31,9 @@ impl CudaKVCache {
         head_dim: usize,
         max_seq_len: usize,
     ) -> Result<Self, Error> {
-        let layer_bytes = n_kv_heads * max_seq_len * head_dim * std::mem::size_of::<f32>();
+        // KV is stored in bf16 (2 bytes/element) — all CUDA attention paths
+        // operate on bf16. Halves the footprint vs the previous f32 sizing.
+        let layer_bytes = n_kv_heads * max_seq_len * head_dim * apxinf_core::DType::BF16.size_in_bytes();
 
         let k_buffers = (0..n_layers)
             .map(|_| CudaBuffer::alloc_zeros(layer_bytes, device_id).map_err(Error::Cuda))
@@ -127,13 +129,15 @@ impl KvCache for CudaKVCache {
 
     fn clear(&mut self) -> apxinf_core::Result<()> {
         self.seq_len = 0;
-        let layer_bytes =
-            self.n_kv_heads * self.max_seq_len * self.head_dim * std::mem::size_of::<f32>();
-        for buf in &mut self.k_buffers {
-            *buf = CudaBuffer::alloc_zeros(layer_bytes, self.device_id).map_err(Error::Cuda)?;
+        // Buffers are allocated as BF16 in `new`; clear them in place instead
+        // of reallocating a transient F32-sized cache. Reallocation here used
+        // to double the KV footprint during the first request and OOM a 24 GiB
+        // RTX 4090 while the model weights were resident.
+        for buf in &self.k_buffers {
+            buf.zero().map_err(Error::Cuda)?;
         }
-        for buf in &mut self.v_buffers {
-            *buf = CudaBuffer::alloc_zeros(layer_bytes, self.device_id).map_err(Error::Cuda)?;
+        for buf in &self.v_buffers {
+            buf.zero().map_err(Error::Cuda)?;
         }
         Ok(())
     }
